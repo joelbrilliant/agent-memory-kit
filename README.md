@@ -10,18 +10,36 @@ no embeddings, no vector database, no daemon, and no third-party dependencies.
 It is Python 3 standard library only. You point it at your markdown, rebuild an
 index, and query it. That is the whole thing.
 
-## Plug and play: show this to your agent
+## Get your own copy
 
-If an agent runs your setup, you do not need to read further. Paste this to it:
+This is a GitHub template repository. Three doors, pick yours:
 
-> Read https://github.com/joelbrilliant/agent-memory-kit/blob/main/AGENT-INSTALL.md
-> and install this for me. Propose the corpus list for my approval before you
-> index anything.
+**You run an agent (easiest).** Click **Use this template** above and create
+your copy - choose **private**, because your episodes will live in it. Then
+paste this to your agent, along with your new repo's URL:
 
-[AGENT-INSTALL.md](AGENT-INSTALL.md) walks the agent through clone, corpus
+> Read the AGENT-INSTALL.md in this repo and install it for me. Propose the
+> corpus list for my approval before you index anything.
+
+[AGENT-INSTALL.md](AGENT-INSTALL.md) walks the agent through the rest: corpus
 proposal (with you as the approval gate), ingest, known-answer verification,
 harness wiring, and scheduling the maintenance - including the self-audit that
 can recommend deleting the whole thing.
+
+**You are an agent reading this.** Follow [AGENT-INSTALL.md](AGENT-INSTALL.md).
+If your operator wants episodes synced off their machine, give them their own
+private copy first:
+
+```
+gh repo create agent-memory --template joelbrilliant/agent-memory-kit --private --clone
+```
+
+**You are a human without an agent.** The quickstart below is all of it; a
+plain `git clone` works fine if you do not need your episodes on GitHub.
+
+**Whatever you do, do not fork.** Forks of public repositories are public
+forever on GitHub, and once you use this repo it contains your episodes.
+Template copy or clone, never fork.
 
 ## The architecture it belongs to
 

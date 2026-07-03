@@ -5,11 +5,27 @@ wants the memory kit installed. Follow these steps in order. Two rules bind you
 throughout: never index anything without the operator approving the corpus
 list, and never claim a step worked without showing its output.
 
-## 1. Clone and check
+## 1. Get the operator their own copy, then check it
+
+If the operator wants their episodes synced off-machine (recommended), create
+their own PRIVATE copy from the template - never a fork, because forks of
+public repos stay public and this repo will hold their episodes:
+
+```
+gh repo create agent-memory --template joelbrilliant/agent-memory-kit --private --clone
+cd agent-memory
+```
+
+Otherwise a plain local clone is fine:
 
 ```
 git clone https://github.com/joelbrilliant/agent-memory-kit ~/agent-memory-kit
 cd ~/agent-memory-kit
+```
+
+Then verify the machine can run it:
+
+```
 python3 -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute(\"CREATE VIRTUAL TABLE t USING fts5(x)\"); print('fts5 ok')"
 ./test.sh
 ```
