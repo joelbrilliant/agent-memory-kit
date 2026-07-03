@@ -37,6 +37,12 @@ gh repo create agent-memory --template joelbrilliant/agent-memory-kit --private 
 **You are a human without an agent.** The quickstart below is all of it; a
 plain `git clone` works fine if you do not need your episodes on GitHub.
 
+**Upstream and your copy.** This repo is the upstream template and stays clean
+of anyone's data; the copy you actually use (private template copy or local
+clone) is your production install. To pull later kit improvements into your
+copy: `git remote add upstream https://github.com/joelbrilliant/agent-memory-kit`,
+then `git fetch upstream` and merge or cherry-pick what you want.
+
 **One warning about forks.** Fork freely to hack on the code - but do not use
 a fork as your live memory home. Forks of public repositories stay public on
 GitHub, and a copy you actually use contains your episodes. Your working copy

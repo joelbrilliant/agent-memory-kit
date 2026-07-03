@@ -34,6 +34,15 @@ The hook derives the index path from its own location, so it finds `index.db`
 in the repo without further configuration. If you keep the index elsewhere, set
 `AGENT_MEMORY_DB` in the hook's environment.
 
+## Hits are hints
+
+Injected results are leads, not authority: the agent should open the file a hit
+points at before relying on it, same as with deliberate recall. And every
+injection spends prompt tokens - on thin or chatty prompts the term extractor
+can fire on words that only look meaningful, adding noise to the context. If
+you notice irrelevant injections, that is what `MIN_PROMPT_WORDS` and
+`SCORE_CEILING` below are for.
+
 ## Knobs
 
 The tuning constants are at the top of `hooks/claude-recall-hook.py`:

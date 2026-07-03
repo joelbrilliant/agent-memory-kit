@@ -20,3 +20,16 @@ project-docs|~/code/myapp/docs/**/*.md
 # This kit's own episodes directory (the evidence-gated write path). Keep this
 # line so episodes you write with `remember` are recallable.
 episodes|~/agent-memory-kit/episodes/**/*.md
+
+# A fuller layout, if you run agents that produce artefacts. Sources like these
+# usually carry the strongest "have we hit this before" signal:
+#
+# product|~/product-docs/**/*.md          product truth and design decisions
+# runs|~/agent-runs/**/*.md               briefs, reviews, findings, signoffs
+# audits|~/code/myapp/docs/audits/**/*.md past review findings
+# vault|~/vault/**/*.md                   personal wiki / second brain
+#
+# Domain jargon (internal product names, ticket prefixes, codenames) is exactly
+# what BM25 is good at, but only if the docs that define the jargon are in the
+# corpus. After ingest, run the known-answer check in AGENT-INSTALL.md step 4
+# and add sources until the answers you know exist actually come back.

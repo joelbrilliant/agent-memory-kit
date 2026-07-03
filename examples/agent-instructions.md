@@ -32,6 +32,12 @@ with the absolute path to your clone.
 > claim, and never record something you would not want committed to a shared git
 > repo. An unverified claim in the memory store is worse than no memory, because
 > it comes back later wearing authority.
+>
+> Episodes record lessons about the WORK. Facts about the OPERATOR - their
+> preferences, habits, current projects, personal context - do not belong in
+> episodes. Those live in the user-model layer or the hand-written handbook
+> (see honcho.md). One fact, one home; do not open a second write path for
+> operator facts just because this one is convenient.
 
 ## Why these two habits
 
