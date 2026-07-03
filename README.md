@@ -37,9 +37,10 @@ gh repo create agent-memory --template joelbrilliant/agent-memory-kit --private 
 **You are a human without an agent.** The quickstart below is all of it; a
 plain `git clone` works fine if you do not need your episodes on GitHub.
 
-**Whatever you do, do not fork.** Forks of public repositories are public
-forever on GitHub, and once you use this repo it contains your episodes.
-Template copy or clone, never fork.
+**One warning about forks.** Fork freely to hack on the code - but do not use
+a fork as your live memory home. Forks of public repositories stay public on
+GitHub, and a copy you actually use contains your episodes. Your working copy
+should be a private template copy or a local clone.
 
 ## The architecture it belongs to
 
