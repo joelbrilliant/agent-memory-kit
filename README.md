@@ -10,6 +10,19 @@ no embeddings, no vector database, no daemon, and no third-party dependencies.
 It is Python 3 standard library only. You point it at your markdown, rebuild an
 index, and query it. That is the whole thing.
 
+## Plug and play: show this to your agent
+
+If an agent runs your setup, you do not need to read further. Paste this to it:
+
+> Read https://github.com/joelbrilliant/agent-memory-kit/blob/main/AGENT-INSTALL.md
+> and install this for me. Propose the corpus list for my approval before you
+> index anything.
+
+[AGENT-INSTALL.md](AGENT-INSTALL.md) walks the agent through clone, corpus
+proposal (with you as the approval gate), ingest, known-answer verification,
+harness wiring, and scheduling the maintenance - including the self-audit that
+can recommend deleting the whole thing.
+
 ## The architecture it belongs to
 
 This kit is layers 3 and 4 of a five-layer memory stack, plus the wiring for
