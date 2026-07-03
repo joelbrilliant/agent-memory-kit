@@ -1,0 +1,100 @@
+# agent-memory-kit - design
+
+This is the philosophy behind the kit. The code is small on purpose; the
+discipline is the point. Three ideas carry it: recall before write, evidence
+gates the write path, and the whole thing must justify its own existence or be
+deleted.
+
+## Recall first
+
+The cheapest useful memory system is a search index over artefacts you already
+have. Most agent work leaves a trail of markdown: notes, review findings,
+verification logs, design docs, decision records. That trail is a knowledge
+base that nobody made queryable. Making it queryable is a smaller job than
+building a write pipeline, and it pays off immediately, because the answer to
+"have we seen this before" is usually already sitting in a file.
+
+So the first move is not to build infrastructure for storing new memories. It
+is to index the artefacts that exist and put a fast query in front of them.
+`ingest.py` does a full rebuild of an FTS5 index over globbed markdown;
+`recall` runs a BM25 query against it. That is the whole read path, and for a
+single-operator corpus it is enough. A full rebuild over a few thousand files
+finishes in about a second, so there is no incremental-update machinery to get
+wrong.
+
+Only after recall is working does a write path earn its place. The one thing
+the existing artefacts miss is episodes: short, dated notes of what happened
+and what to do differently next time. That gap is what `remember` fills, and
+nothing more.
+
+## Write discipline
+
+Memory systems rot from garbage writes, not bad reads. A wrong entry in a
+search index is worse than a missing one, because it comes back later wearing
+the authority of a stored fact and gets trusted precisely when you have
+stopped scrutinising it.
+
+So the write path is gated. `remember` refuses to run without `--evidence` (a
+file path, a commit SHA, a PR or issue URL, or a log path) and a `--source`.
+The gate is not a suggestion enforced by a linter; it is a hard exit-2 in the
+tool. The intent is that episodes get written only at verified checkpoints: a
+signed-off change, an accepted review finding, or an explicit human
+instruction. Never mid-run, never speculative, never an agent's unverified
+claim. The same rule that says "an external agent's claim is not proof" applies
+to the memory store: if you cannot point at evidence, you do not get to write.
+
+Because episodes are plain markdown under version control, treat the store the
+way you treat any synced git repo: do not write anything into it that you would
+not want committed and shared.
+
+## Self-audit and kill criteria
+
+Memory that cannot prove it changed an outcome is a liability, not an asset. It
+costs attention on every read and it accumulates rot. So the kit is built to be
+killable, and it expects you to schedule the audit that might kill it.
+
+`recall` logs every deliberate query and its top hit to `usage.log`. The
+optional Claude Code hook logs its automatic injections to a separate `hook.log`
+so you can tell deliberate recall apart from automatic. Point a scheduled prompt
+at those logs and the episodes directory on a fixed cadence and make it answer
+one question: did recall demonstrably change any outcome (a repeat issue caught,
+a run shortened, a known finding avoided)? If the honest answer over a real
+window is no, the recommendation is to delete the kit. The audit is report-only;
+it never deletes anything itself. But it is allowed, and expected, to recommend
+its own removal. There is no sentimental infrastructure.
+
+## One home per fact
+
+Every fact should live in exactly one place. This store owns exactly one thing:
+episodes. Everything else it touches, it only reads. The corpus globs point at
+files that other systems own; the index never becomes their canonical home. If
+a piece of knowledge belongs in a skill file, a runbook, or a design doc, it
+goes there, not into an episode that quietly forks the truth.
+
+Derived artefacts are never the source of truth and never synced. `index.db`,
+`usage.log`, `hook.log`, and `ingest.log` are all rebuilt per machine and
+gitignored. Clone the repo onto another machine, rebuild the index against
+whatever corpus exists locally, and you are current. Nothing derived travels.
+
+## Rejected paths (named)
+
+Naming what was considered and rejected is part of the design, so the choices do
+not get relitigated by accident.
+
+- **Embeddings / vector DB first.** Rejected. It is more infrastructure (a model,
+  an embedding store, a similarity index) with no evidence that keyword search is
+  the bottleneck. BM25 with porter stemming over curated markdown is boring,
+  dependency-free, and good enough until a measured miss proves otherwise. Reach
+  for embeddings when you can point at recall failures they would fix, not before.
+
+- **A five-level cognitive memory store with activation decay.** Rejected. The
+  layered-store, activation-maths, consolidation-loop design is ceremony for a
+  single-operator setup. It adds moving parts that all have to be correct before
+  any of it helps. Start with a flat index and one write path; revisit only if
+  that plateaus against real usage.
+
+- **MCP-only integration.** Rejected as the sole interface. A plain CLI works in
+  every harness that can run a shell, with no protocol coupling, and it is
+  trivially scriptable and testable. The MCP server ships too (`mcp_server.py`),
+  but as a convenience wrapper over the same CLIs, not as the thing you must
+  adopt. One implementation of the query and write logic; two ways to call it.

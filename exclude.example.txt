@@ -1,0 +1,22 @@
+# agent-memory-kit path excludes - one path substring per line.
+#
+# Copy this file to exclude.txt and edit it. exclude.txt is optional and
+# gitignored; only this .example ships.
+#
+# Each non-comment line is a substring. If a file's absolute path contains any
+# of these substrings, the file is skipped during ingest. These are MERGED with
+# the builtin defaults ("/.git/" and "/node_modules/"), which are always
+# excluded whether or not exclude.txt exists.
+#
+# Blank lines and lines starting with # are ignored. Match is a plain substring,
+# not a glob, so "/backups/" excludes anything under any backups directory.
+
+# Skip backup and archive directories that would otherwise pollute recall.
+/backups/
+/archive/
+
+# Skip a vendored dependency tree.
+/vendor/
+
+# Skip a specific noisy subtree by an unambiguous path fragment.
+# ~/notes/scratch/

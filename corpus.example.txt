@@ -1,0 +1,22 @@
+# agent-memory-kit corpus - one entry per line, format: tag|glob
+#
+# Copy this file to corpus.txt and edit it for your machine. corpus.txt is
+# gitignored so your local layout stays local; only this .example ships.
+#
+# - tag: a short label for the source. It shows up in recall output and you
+#   can filter on it with `./recall "query" --source tag`.
+# - glob: a shell glob. Use ** for recursive matching (globs run with
+#   recursive=True). Leading ~/ is expanded to your home directory.
+# - Blank lines and lines starting with # are ignored.
+# - Only regular .md files under a glob are indexed; everything else is skipped.
+# - A file matched by several globs is indexed once (first tag wins).
+
+# Your own notes.
+notes|~/notes/**/*.md
+
+# Docs for a project you work on.
+project-docs|~/code/myapp/docs/**/*.md
+
+# This kit's own episodes directory (the evidence-gated write path). Keep this
+# line so episodes you write with `remember` are recallable.
+episodes|~/agent-memory-kit/episodes/**/*.md

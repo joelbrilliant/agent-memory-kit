@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""remember - write an evidence-gated episode and index it. Python 3 stdlib only.
+
+Usage: remember --source AGENT --evidence REF [--tags a,b] "content"
+(content may be piped on stdin if the positional arg is omitted)
+See DESIGN.md write-discipline rule.
+"""
+import os
+import re
+import sys
+import sqlite3
+import argparse
+import datetime
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("AGENT_MEMORY_DB", os.path.join(SCRIPT_DIR, "index.db"))
+ROOT_DIR = os.environ.get("AGENT_MEMORY_ROOT", SCRIPT_DIR)
+EPISODES_DIR = os.path.join(ROOT_DIR, "episodes")
+
+WRITE_DISCIPLINE = (
+    "DESIGN.md write discipline: `remember` refuses to run without "
+    "`--evidence` (a file path, commit SHA, PR/issue URL, or log path) "
+    "and a `--source`. An unverified claim in a memory store is worse "
+    "than no memory, because it comes back later wearing authority."
+)
+
+
+def slugify(content):
+    """First 6 meaningful words, lowercased, hyphenated, [a-z0-9-] only."""
+    words = re.findall(r"[A-Za-z0-9]+", content.lower())
+    slug = "-".join(words[:6])
+    slug = re.sub(r"[^a-z0-9-]", "", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "episode"
+
+
+def unique_path(base_dir, date_str, slug):
+    path = os.path.join(base_dir, "%s-%s.md" % (date_str, slug))
+    if not os.path.exists(path):
+        return path
+    n = 2
+    while True:
+        path = os.path.join(base_dir, "%s-%s-%d.md" % (date_str, slug, n))
+        if not os.path.exists(path):
+            return path
+        n += 1
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="remember", add_help=True)
+    ap.add_argument("content", nargs="?", default=None)
+    ap.add_argument("--source", default=None)
+    ap.add_argument("--evidence", default=None)
+    ap.add_argument("--tags", default=None, help="comma-separated tags")
+    args = ap.parse_args()
+
+    # Hard gate: evidence and source are mandatory.
+    if not args.evidence or not args.evidence.strip():
+        sys.stderr.write("remember: REFUSED - missing --evidence.\n" + WRITE_DISCIPLINE + "\n")
+        return 2
+    if not args.source or not args.source.strip():
+        sys.stderr.write("remember: REFUSED - missing --source.\n" + WRITE_DISCIPLINE + "\n")
+        return 2
+
+    content = args.content
+    if content is None:
+        content = sys.stdin.read()
+    content = content.strip()
+    if not content:
+        sys.stderr.write("remember: REFUSED - empty content.\n")
+        return 2
+
+    tags = []
+    if args.tags:
+        tags = [t.strip() for t in args.tags.split(",") if t.strip()]
+
+    date_str = datetime.date.today().isoformat()
+    slug = slugify(content)
+
+    os.makedirs(EPISODES_DIR, exist_ok=True)
+    path = unique_path(EPISODES_DIR, date_str, slug)
+
+    frontmatter = [
+        "---",
+        "date: %s" % date_str,
+        "source: %s" % args.source.strip(),
+        "evidence: %s" % args.evidence.strip(),
+        "tags: [%s]" % ", ".join(tags),
+        "---",
+        "",
+    ]
+    file_text = "\n".join(frontmatter) + content + "\n"
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(file_text)
+
+    # Insert directly into the index so it's recallable immediately.
+    if os.path.exists(DB_PATH):
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            mtime = int(os.path.getmtime(path))
+            conn.execute(
+                "INSERT INTO docs (content, path, source, mtime) VALUES (?, ?, ?, ?)",
+                (file_text, os.path.abspath(path), "episodes", mtime),
+            )
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            sys.stderr.write("remember: warning - index insert failed (%s); "
+                             "run ingest.py to pick it up.\n" % e)
+    else:
+        sys.stderr.write("remember: note - index.db missing at %s; "
+                         "episode written but not indexed. Run ingest.py.\n" % DB_PATH)
+
+    print(path)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

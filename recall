@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""recall - query the agent-memory FTS5 index. Python 3 stdlib only.
+
+Usage: recall "query" [-k N] [--source TAG]
+See DESIGN.md for the contract.
+"""
+import os
+import sys
+import time
+import sqlite3
+import argparse
+import datetime
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.environ.get("AGENT_MEMORY_DB", os.path.join(SCRIPT_DIR, "index.db"))
+ROOT_DIR = os.environ.get("AGENT_MEMORY_ROOT", SCRIPT_DIR)
+USAGE_LOG = os.path.join(ROOT_DIR, "usage.log")
+
+
+def fts_terms(query):
+    """Whitespace-split, wrap each term in double quotes (escape inner quotes)."""
+    terms = []
+    for term in query.split():
+        terms.append('"' + term.replace('"', '""') + '"')
+    return terms
+
+
+def run_query(conn, match_expr, source, fetch):
+    sql = (
+        "SELECT path, source, mtime, bm25(docs) AS score, "
+        "snippet(docs, 0, '', '', ' ... ', 32) AS snip "
+        "FROM docs WHERE docs MATCH ?"
+    )
+    params = [match_expr]
+    if source:
+        sql += " AND source = ?"
+        params.append(source)
+    sql += " ORDER BY bm25(docs) LIMIT ?"
+    params.append(fetch)
+    return conn.execute(sql, params).fetchall()
+
+
+def log_usage(query, top_path):
+    """Append ISO-ts TAB query TAB top-hit-path. Never raise on failure."""
+    try:
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        with open(USAGE_LOG, "a", encoding="utf-8") as fh:
+            fh.write("%s\t%s\t%s\n" % (ts, query, top_path))
+    except OSError:
+        pass
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="recall", add_help=True)
+    ap.add_argument("query")
+    ap.add_argument("-k", type=int, default=5, help="number of hits (default 5)")
+    ap.add_argument("--source", default=None, help="filter by source tag")
+    args = ap.parse_args()
+
+    if not os.path.exists(DB_PATH):
+        sys.stderr.write("recall: index.db not found at %s (run ingest.py)\n" % DB_PATH)
+        return 1
+
+    k = max(1, args.k)
+    terms = fts_terms(args.query)
+    if not terms:
+        print("no results")
+        log_usage(args.query, "NONE")
+        return 0
+
+    conn = sqlite3.connect(DB_PATH)
+    fetch = k * 3
+    or_fallback = False
+
+    and_expr = " ".join(terms)
+    rows = run_query(conn, and_expr, args.source, fetch)
+    if not rows and len(terms) > 1:
+        or_expr = " OR ".join(terms)
+        rows = run_query(conn, or_expr, args.source, fetch)
+        if rows:
+            or_fallback = True
+
+    conn.close()
+
+    if not rows:
+        print("no results")
+        log_usage(args.query, "NONE")
+        return 0
+
+    # Stable-sort: bm25 (rounded 1dp, ascending = better) then newer mtime.
+    # rows: (path, source, mtime, score, snip)
+    ranked = sorted(rows, key=lambda r: (round(r[3], 1), -r[2]))
+    ranked = ranked[:k]
+
+    header = 'recall: "%s"' % args.query
+    if args.source:
+        header += " [source=%s]" % args.source
+    if or_fallback:
+        header += " (or-fallback)"
+    print(header)
+    print("")
+
+    for i, (path, source, mtime, score, snip) in enumerate(ranked, start=1):
+        try:
+            iso = datetime.date.fromtimestamp(mtime).isoformat()
+        except (OSError, OverflowError, ValueError):
+            iso = "?"
+        print("%d. [%.2f] %s  %s" % (i, score, source, path))
+        print("   %s" % iso)
+        snippet = " ".join(snip.split())  # collapse whitespace to 2-3 tidy lines
+        print("   %s" % snippet)
+        print("")
+
+    log_usage(args.query, ranked[0][0])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,8 @@
+index.db
+usage.log
+hook.log
+ingest.log
+__pycache__/
+.DS_Store
+corpus.txt
+exclude.txt
