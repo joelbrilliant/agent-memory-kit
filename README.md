@@ -98,6 +98,9 @@ warning. An unverified claim in a memory store is worse than no memory, because
 it comes back later wearing authority: it gets trusted exactly when you have
 stopped checking it. The evidence can be a file path, a commit SHA, a PR or
 issue URL, or a log path. If you cannot point at one, you do not get to write.
+Note the gate forces a *reference*, it does not validate one - a fabricated
+path passes the tool. That is deliberate: verification is the self-audit's
+job, and a citation that leads nowhere is exactly what an audit catches.
 
 **One home per fact.** This store owns exactly one thing: episodes. Everything
 else it indexes, it reads and never claims to own. Derived files (`index.db`,

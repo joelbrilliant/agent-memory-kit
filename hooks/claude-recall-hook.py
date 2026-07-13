@@ -23,7 +23,24 @@ HOOK_LOG = os.path.join(REPO, "hook.log")
 MIN_PROMPT_WORDS = 6
 MAX_TERMS = 15
 TOP_K = 3
-SCORE_CEILING = -10.0  # bm25: more negative = better; inject only if <= this
+
+# bm25: more negative = better. The injection gate ADAPTS to corpus size,
+# because bm25 magnitudes grow with the index: a bullseye hit in a 5-doc
+# corpus scores around -4, while an equally good hit in a 2,500-doc corpus
+# scores -15 or deeper. A fixed ceiling tuned to one scale is silent at the
+# other (found by a cold-install rehearsal on a fresh corpus). Override with
+# the SCORE_CEILING env var (e.g. "-6.0") to pin it manually.
+SCORE_CEILING_ENV = os.environ.get("SCORE_CEILING")
+
+
+def score_ceiling(doc_count):
+    if SCORE_CEILING_ENV:
+        try:
+            return float(SCORE_CEILING_ENV)
+        except ValueError:
+            pass
+    # -2.0 floor for tiny corpora, deepening linearly to -10.0 at ~2,500 docs.
+    return -min(10.0, max(2.0, doc_count / 250.0))
 
 STOPWORDS = {
     "the", "and", "for", "that", "this", "with", "you", "your", "can",
@@ -78,11 +95,12 @@ def main():
             "FROM docs WHERE docs MATCH ? ORDER BY bm25(docs) LIMIT ?",
             (match_expr, TOP_K),
         ).fetchall()
+        doc_count = conn.execute("SELECT count(*) FROM docs").fetchone()[0]
         conn.close()
     except sqlite3.Error:
         return 0
 
-    hits = [r for r in rows if r[3] <= SCORE_CEILING]
+    hits = [r for r in rows if r[3] <= score_ceiling(doc_count)]
     if not hits:
         log(terms, "NONE")
         return 0

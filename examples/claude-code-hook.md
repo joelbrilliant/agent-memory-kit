@@ -32,7 +32,9 @@ Replace `/path/to/agent-memory-kit` with the absolute path to your clone.
 
 The hook derives the index path from its own location, so it finds `index.db`
 in the repo without further configuration. If you keep the index elsewhere, set
-`AGENT_MEMORY_DB` in the hook's environment.
+`AGENT_MEMORY_DB` in the hook's environment. Reference the hook in place - do
+NOT copy the file into `~/.claude/` or elsewhere, because a moved copy derives
+wrong paths for both the index and the `recall` command it advertises.
 
 ## Hits are hints
 
@@ -49,10 +51,14 @@ The tuning constants are at the top of `hooks/claude-recall-hook.py`:
 
 - `MIN_PROMPT_WORDS` (default 6): prompts shorter than this are ignored, so
   quick one-liners do not trigger a recall.
-- `SCORE_CEILING` (default -10.0): the BM25 score gate. BM25 scores are negative
-  and more negative means a better match, so a hit is injected only when its
-  score is at or below this ceiling. Lower it (more negative) to inject only on
-  strong matches; raise it toward zero to inject more freely.
+- Score gate (ADAPTIVE): BM25 scores are negative and more negative means a
+  better match, but their magnitude grows with corpus size - a bullseye in a
+  5-doc corpus scores around -4 while the same quality hit in a 2,500-doc
+  corpus scores -15 or deeper. The hook therefore computes its ceiling from
+  the index's document count at query time (a -2.0 floor for tiny corpora,
+  deepening to -10.0 at ~2,500 docs). To pin it manually, set the
+  `SCORE_CEILING` env var in the hook's environment (e.g. "-6.0"): more
+  negative injects only on strong matches, toward zero injects more freely.
 - `TOP_K` (default 3): how many hits to inject at most.
 - `MAX_TERMS` (default 15): cap on how many content words from the prompt become
   search terms.

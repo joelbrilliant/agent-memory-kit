@@ -7,21 +7,26 @@ list, and never claim a step worked without showing its output.
 
 ## 1. Get the operator their own copy, then check it
 
-If the operator wants their episodes synced off-machine (recommended), create
-their own PRIVATE copy from the template - never a fork, because forks of
-public repos stay public and this repo will hold their episodes:
+The path that always works - a plain local clone:
+
+```
+git clone https://github.com/joelbrilliant/agent-memory-kit ~/agent-memory-kit
+cd ~/agent-memory-kit
+```
+
+IF the `gh` CLI is installed and authenticated (check with `gh auth status`)
+and the operator wants episodes synced off-machine, you can instead create
+their own PRIVATE GitHub copy from the template - never a fork, because forks
+of public repos stay public and this repo will hold their episodes:
 
 ```
 gh repo create agent-memory --template joelbrilliant/agent-memory-kit --private --clone
 cd agent-memory
 ```
 
-Otherwise a plain local clone is fine:
-
-```
-git clone https://github.com/joelbrilliant/agent-memory-kit ~/agent-memory-kit
-cd ~/agent-memory-kit
-```
+Note the directory name differs between the two paths (`agent-memory-kit` vs
+`agent-memory`). Whichever you use, the `episodes` glob you write into
+corpus.txt in step 2 must point at THIS clone's episodes directory.
 
 Then verify the machine can run it:
 
@@ -57,10 +62,19 @@ deserve attention regardless of this install.
 ## 4. Verify with known answers (acceptance gate)
 
 Ask the operator for 3-5 things they know are in their notes ("the fix for X",
-"the decision about Y"). Run `./recall` for each. The right document should
-appear in the top 3. If it does not, the corpus is missing a source or the
-terms need work - tune and re-run. Do not declare the install done on a 0-hit
-index. Show the operator the actual recall output.
+"the decision about Y"). Tip for a single round-trip: request these facts in
+the SAME message where you ask for corpus approval in step 2.
+
+Run `./recall` for each. This is keyword search with stemming, not semantic
+search - phrase queries with words likely to appear IN the document (the doc
+says "switched supplier", so query "supplier switched", not "which vendor did
+I pick"). A result tagged `(or-fallback)` matched on partial terms only -
+treat it as a weak hit and rephrase before counting it.
+
+The right document should appear in the top 3. If it does not, the corpus is
+missing a source or the query needs the document's own vocabulary - tune and
+re-run. Do not declare the install done on a 0-hit index. Show the operator
+the actual recall output.
 
 ## 5. Wire your own harness
 

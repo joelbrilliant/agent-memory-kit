@@ -18,7 +18,9 @@ notes|~/notes/**/*.md
 project-docs|~/code/myapp/docs/**/*.md
 
 # This kit's own episodes directory (the evidence-gated write path). Keep this
-# line so episodes you write with `remember` are recallable.
+# line so episodes you write with `remember` are recallable. IMPORTANT: the
+# path must match YOUR clone directory - a template copy created with `gh repo
+# create agent-memory ...` lives at ~/agent-memory, not ~/agent-memory-kit.
 episodes|~/agent-memory-kit/episodes/**/*.md
 
 # A fuller layout, if you run agents that produce artefacts. Sources like these
