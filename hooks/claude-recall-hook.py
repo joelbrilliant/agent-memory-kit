@@ -20,6 +20,22 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("AGENT_MEMORY_DB", os.path.join(REPO, "index.db"))
 HOOK_LOG = os.path.join(REPO, "hook.log")
 
+# Optional injection excludes: path substrings listed in hook-exclude.txt
+# (one per line, # comments) are never auto-injected. Use for generic files
+# that match almost any query and crowd out real hits - a live audit found
+# one such file was 18% of all injections. Excluded files stay in the index
+# for deliberate recall; they just stop being ambient noise.
+HOOK_EXCLUDE_PATH = os.path.join(REPO, "hook-exclude.txt")
+
+
+def load_hook_excludes():
+    try:
+        with open(HOOK_EXCLUDE_PATH, encoding="utf-8") as fh:
+            return [ln.strip() for ln in fh
+                    if ln.strip() and not ln.strip().startswith("#")]
+    except OSError:
+        return []
+
 MIN_PROMPT_WORDS = 6
 MAX_TERMS = 15
 TOP_K = 3
@@ -93,14 +109,18 @@ def main():
             "SELECT path, source, mtime, bm25(docs) AS score, "
             "snippet(docs, 0, '', '', ' ... ', 24) AS snip "
             "FROM docs WHERE docs MATCH ? ORDER BY bm25(docs) LIMIT ?",
-            (match_expr, TOP_K),
+            (match_expr, TOP_K * 3),
         ).fetchall()
         doc_count = conn.execute("SELECT count(*) FROM docs").fetchone()[0]
         conn.close()
     except sqlite3.Error:
         return 0
 
-    hits = [r for r in rows if r[3] <= score_ceiling(doc_count)]
+    excludes = load_hook_excludes()
+    ceiling = score_ceiling(doc_count)
+    hits = [r for r in rows
+            if r[3] <= ceiling
+            and not any(x in r[0] for x in excludes)][:TOP_K]
     if not hits:
         log(terms, "NONE")
         return 0

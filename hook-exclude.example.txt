@@ -1,0 +1,12 @@
+# agent-memory-kit hook excludes - copy to hook-exclude.txt and edit.
+#
+# Path substrings (one per line) that the Claude Code auto-recall hook will
+# never inject. hook-exclude.txt is gitignored so your list stays local.
+#
+# When to use: watch hook.log for a while. If one generic, wordy document
+# keeps appearing for unrelated prompts, it is crowding out real hits -
+# exclude it here. It stays in the index for deliberate `recall` queries;
+# it just stops being ambient noise.
+#
+# Example:
+# some-broad-glossary-or-reference-doc

@@ -18,7 +18,8 @@ scheduled agent, a cron job that calls your CLI in one-shot mode, and so on).
 > repo at `/path/to/agent-memory-kit`:
 >
 > - `usage.log`: deliberate `recall` queries. Each line is `timestamp TAB query
->   TAB top-hit-path` (or `NONE` when nothing matched).
+>   TAB top-hit-path TAB caller` (`NONE` as the path when nothing matched;
+>   caller is `-` when unset).
 > - `hook.log`: automatic recall injections from the Claude Code hook, same
 >   format. Deliberate recall (usage.log) is the stronger signal; automatic
 >   injection (hook.log) shows what was pushed, not what was reached for.
@@ -33,6 +34,21 @@ scheduled agent, a cron job that calls your CLI in one-shot mode, and so on).
 > Report exactly one verdict: KEEP or KILL, followed by the evidence that
 > supports it. Do not delete anything. Do not modify the index, the logs, or the
 > episodes. Report only.
+
+## Make the numbers honest
+
+Three adjustments a live audit of this kit proved necessary - raw counts
+flatter the system:
+
+- **Segment by caller** (the last usage.log column). One agent re-running
+  near-identical queries against files it already knows is grep, not memory -
+  legitimate use, but it inflates the headline. Judge the verdict on the
+  diverse remainder.
+- **Discount repeated queries.** Count unique queries and unique top-hit
+  files, not raw lines.
+- **Check the hook for degenerate hits.** If one path dominates hook.log
+  across unrelated prompts, most of those injections were noise, not value -
+  and that file belongs in hook-exclude.txt (see claude-code-hook.md).
 
 ## Suggested kill criteria
 

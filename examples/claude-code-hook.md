@@ -66,6 +66,16 @@ The tuning constants are at the top of `hooks/claude-recall-hook.py`:
 Start with the defaults. If auto-recall feels noisy, make `SCORE_CEILING` more
 negative first.
 
+## The degenerate-hit trap, and hook-exclude.txt
+
+The known failure mode of ambient injection: one broad, wordy document (a
+glossary, a sweeping reference) matches almost any prompt and quietly becomes
+a large share of everything injected - a live audit of this hook found a
+single file behind 18% of all injections. Watch `hook.log`: if the same path
+keeps winning for unrelated prompts, copy `hook-exclude.example.txt` to
+`hook-exclude.txt` and add a substring of that path. Excluded files stay in
+the index for deliberate `recall`; they just stop being ambient noise.
+
 ## Two logs, on purpose
 
 The hook logs its automatic injections to `hook.log`, which is separate from the

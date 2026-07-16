@@ -41,11 +41,18 @@ def run_query(conn, match_expr, source, fetch):
 
 
 def log_usage(query, top_path):
-    """Append ISO-ts TAB query TAB top-hit-path. Never raise on failure."""
+    """Append ISO-ts TAB query TAB top-hit-path TAB caller. Never raise.
+
+    Caller comes from the AGENT_MEMORY_CALLER env var so self-audits can
+    segment usage by who asked (set it per harness in your MCP/skill
+    wiring). Appended as the LAST field so parsers of the original three
+    columns keep working.
+    """
     try:
         ts = datetime.datetime.now().isoformat(timespec="seconds")
+        caller = os.environ.get("AGENT_MEMORY_CALLER", "-")
         with open(USAGE_LOG, "a", encoding="utf-8") as fh:
-            fh.write("%s\t%s\t%s\n" % (ts, query, top_path))
+            fh.write("%s\t%s\t%s\t%s\n" % (ts, query, top_path, caller))
     except OSError:
         pass
 

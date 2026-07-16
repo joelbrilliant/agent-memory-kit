@@ -38,6 +38,12 @@ with the absolute path to your clone.
 > episodes. Those live in the user-model layer or the hand-written handbook
 > (see honcho.md). One fact, one home; do not open a second write path for
 > operator facts just because this one is convenient.
+>
+> An episode is a LESSON, not a status report. The test: will this still be
+> true and useful in a month? "Phase 1 completed, queue at X" belongs in your
+> tracker and rots in a week; "X fails when Y, do Z instead" is an episode.
+> Status snapshots written as episodes duplicate your tracker and poison
+> future recalls with stale state.
 
 ## Why these two habits
 

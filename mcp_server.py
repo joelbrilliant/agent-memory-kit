@@ -75,6 +75,11 @@ TOOLS = [
 ]
 
 
+# Label MCP-originated calls in usage.log unless the registration already
+# sets a more specific caller (e.g. AGENT_MEMORY_CALLER=claude-code).
+os.environ.setdefault("AGENT_MEMORY_CALLER", "mcp")
+
+
 def run_cli(cmd):
     try:
         proc = subprocess.run(
