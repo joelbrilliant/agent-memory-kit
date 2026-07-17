@@ -20,7 +20,9 @@ EPISODES_DIR = os.path.join(ROOT_DIR, "episodes")
 WRITE_DISCIPLINE = (
     "DESIGN.md write discipline: `remember` refuses to run without "
     "`--evidence` (a file path, commit SHA, PR/issue URL, or log path) "
-    "and a `--source`. An unverified claim in a memory store is worse "
+    "and a `--source`. Write durable lessons that remain useful in a "
+    "month, never queue, phase, completion, or other status snapshots. "
+    "An unverified claim in a memory store is worse "
     "than no memory, because it comes back later wearing authority."
 )
 

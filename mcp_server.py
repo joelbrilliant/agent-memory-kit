@@ -56,6 +56,9 @@ TOOLS = [
             "Write an episode to local agent memory. HARD RULES: only at "
             "verified checkpoints (a signed-off change, an accepted finding, "
             "or an explicit instruction), never mid-run, never speculative. "
+            "An episode is a durable lesson, not a status report: use the "
+            "one-month test and keep queue, phase, and completion snapshots "
+            "in the tracker or handover. "
             "evidence is mandatory (commit SHA, file path, PR/issue URL, or "
             "log path) - the tool refuses without it. Do not write anything "
             "you would not want in a synced git repo (episodes are plain "
@@ -64,7 +67,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "content": {"type": "string", "description": "What happened and what to do next time"},
+                "content": {"type": "string", "description": "Durable lesson that will still be useful in a month, not current status"},
                 "source": {"type": "string", "description": "Who or what is writing (e.g. an agent name, or 'me')"},
                 "evidence": {"type": "string", "description": "Commit SHA, file path, PR/issue URL, or log path"},
                 "tags": {"type": "string", "description": "Optional comma-separated tags"},

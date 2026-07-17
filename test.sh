@@ -90,6 +90,14 @@ else
   fi
 fi
 
+# --- d2. refusal guidance carries the durable-lesson rule ---
+DISCIPLINE_OUT="$(python3 "$TMP/remember" --source tester "status snapshot" 2>&1 || true)"
+if echo "$DISCIPLINE_OUT" | grep -q "durable lessons that remain useful in a month"; then
+  pass "d2: refusal guidance carries the durable-lesson rule"
+else
+  fail "d2: refusal guidance omitted the durable-lesson rule"
+fi
+
 # --- e. remember WITH --evidence creates episode with frontmatter; recall finds it ---
 EP_PATH="$(python3 "$TMP/remember" --source tester --evidence "commit:abc123" --tags smoke,test \
   "quokka telemetry drift caught during nightly reconcile sweep")"
