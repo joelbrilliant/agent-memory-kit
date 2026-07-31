@@ -128,6 +128,14 @@ else
   fail "f: recall of nonexistent term exited nonzero"
 fi
 
+# --- g. deterministic cross-harness session adapter and hook tests ---
+if PYTHONPATH="$REPO_DIR" python3 -m unittest discover \
+  -s "$REPO_DIR/tests" -p 'test_*.py'; then
+  pass "g: cross-harness continuity tests pass"
+else
+  fail "g: cross-harness continuity tests failed"
+fi
+
 echo "----------------------------------------"
 if [ "$FAILURES" -eq 0 ]; then
   echo "ALL TESTS PASSED"

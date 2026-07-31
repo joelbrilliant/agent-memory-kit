@@ -2,13 +2,18 @@
 
 ## What this is
 
-Local, boring-on-purpose memory for AI agents. It gives an agent two things:
-BM25 full-text search over the markdown you already have (`recall`), and an
-episodic write path that refuses to record anything without evidence
-(`remember`). The search is plain SQLite FTS5 with porter stemming. There are
-no embeddings, no vector database, no daemon, and no third-party dependencies.
-It is Python 3 standard library only. You point it at your markdown, rebuild an
-index, and query it. That is the whole thing.
+Local, boring-on-purpose memory for AI agents. It gives every local harness
+three shared capabilities:
+
+- BM25 full-text search over the markdown you already have (`recall`)
+- an episodic write path that refuses to record anything without evidence
+  (`remember`)
+- on-demand recall over local Hermes, Claude Code, Codex and Grok dialogue
+  (`session-memory`)
+
+Both indexes use plain SQLite FTS5. There are no embeddings, no vector
+database, no daemon, no external service and no LLM in the indexing or
+retrieval path. It is Python 3 standard library only.
 
 ## Get your own copy
 
@@ -18,13 +23,17 @@ This is a GitHub template repository. Three doors, pick yours:
 your copy - choose **private**, because your episodes will live in it. Then
 paste this to your agent, along with your new repo's URL:
 
-> Read the AGENT-INSTALL.md in this repo and install it for me. Propose the
-> corpus list for my approval before you index anything.
+> Read AGENT-INSTALL.md and CONTINUITY-INSTALL.md in this repo and install the
+> full cross-harness memory stack for me. Propose both the markdown corpus and
+> local session sources for my approval before you index anything.
 
 [AGENT-INSTALL.md](AGENT-INSTALL.md) walks the agent through the rest: corpus
 proposal (with you as the approval gate), ingest, known-answer verification,
 harness wiring, and scheduling the maintenance - including the self-audit that
 can recommend deleting the whole thing.
+
+If your main goal is continuity between agents, use the ready-to-paste prompt
+in [CONTINUITY-INSTALL.md](CONTINUITY-INSTALL.md).
 
 **You are an agent reading this.** Follow [AGENT-INSTALL.md](AGENT-INSTALL.md).
 If your operator wants episodes synced off their machine, give them their own
@@ -50,24 +59,24 @@ should be a private template copy or a local clone.
 
 ## The architecture it belongs to
 
-This kit is layers 3 and 4 of a five-layer memory stack, plus the wiring for
-the rest. The stack:
+This kit provides the deterministic read and write layers of a five-layer
+memory stack, plus wiring examples for the rest:
 
 1. A small hand-written "handbook" of contracts the agent reads at the start of
    every session. This is the load-bearing, human-curated layer: how you work,
    what the non-negotiables are, where things live. It stays hand-written.
-2. A user-model layer that learns the operator from conversations over time.
-   See [examples/honcho.md](examples/honcho.md). The open-source Honcho project
-   by Plastic Labs fills this layer. This kit is not affiliated with it.
-3. Searchable recall over work artefacts. This kit. `ingest.py` + `recall`.
-4. Evidence-gated episodes. This kit. `remember`.
+2. Live task state in the issue, brief, pull request or product source of truth.
+   Current status does not belong in memory.
+3. Searchable recall over work artefacts and evidence-gated episodes. This kit.
+   `ingest.py`, `recall` and `remember`.
+4. Exact prior dialogue, indexed locally and recalled only when relevant. This
+   kit. `session-memory`.
 5. Procedures and skills as files. Ordinary markdown or scripts the agent reads
    and follows, owned wherever they naturally live.
 
-This repo ships layers 3 and 4 and points at how to wire in the rest (the hook,
-the MCP server, the user-model layer, the agent instructions). It does not try
-to own the other layers, because facts should live in one home each and these
-already have theirs.
+This does not infer a personality model or silently promote chat into durable
+truth. A user-model product can be added separately if you genuinely need one,
+but cross-harness continuity does not require it.
 
 ## Quickstart
 
@@ -89,6 +98,18 @@ python3 ingest.py                      # build index.db from your corpus
 
 `corpus.txt` is a list of `tag|glob` lines. Leading `~/` is expanded. Only `.md`
 files are indexed. See the comments in `corpus.example.txt` for the details.
+
+To build the separate local transcript index:
+
+```
+./session-memory sync
+./session-memory list -n 20
+./session-memory recall "distinctive terms from an earlier conversation" -k 5
+```
+
+The default source paths are `~/.hermes/state.db`, `~/.claude/projects`,
+`~/.codex/sessions` and `~/.grok/sessions`. Missing harnesses are skipped.
+Nothing from `sessions.db` is committed or sent anywhere.
 
 ## The two rules that matter
 
@@ -122,10 +143,12 @@ Each is a short, practical file under [examples/](examples/):
   index on a schedule (launchd on macOS, cron on Linux).
 - [examples/self-audit.md](examples/self-audit.md) - a scheduled prompt that
   judges whether recall earned its keep and reports KEEP or KILL.
-- [examples/honcho.md](examples/honcho.md) - the user-model layer, and how it
-  complements this kit.
+- [examples/honcho.md](examples/honcho.md) - an optional user-model layer. It
+  is not required for deterministic cross-harness continuity.
 - [examples/agent-instructions.md](examples/agent-instructions.md) - a
   copy-paste system-prompt snippet for any agent harness.
+- [examples/session-continuity.md](examples/session-continuity.md) - session
+  source paths, privacy boundaries, verification and per-harness behaviour.
 
 ## Self-audit
 
@@ -147,6 +170,9 @@ evidence. It never deletes anything itself. See
   story, and no concurrency model beyond one person on one machine.
 - The auto-recall hook uses a small hard-coded English stopword list, so its
   term extraction is English-only. The CLIs themselves are language-agnostic.
+- Session continuity is local to one machine. If harness histories live on
+  different machines, each machine has its own index unless you deliberately
+  provide a secure shared filesystem. The kit never syncs raw transcripts.
 
 ## Requirements
 

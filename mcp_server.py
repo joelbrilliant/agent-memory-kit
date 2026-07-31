@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Stdio MCP server exposing agent-memory recall/remember as first-class tools.
+"""Stdio MCP server exposing durable and session memory as first-class tools.
 
-Python stdlib only. Wraps the existing recall/remember CLIs via subprocess so
-there is exactly one implementation of query and write logic; MCP-driven
-recalls land in usage.log like any other deliberate call.
+Python stdlib only. Wraps the existing CLI tools via subprocess so there is
+exactly one implementation of query and write logic; MCP-driven recalls land
+in usage.log like any other deliberate call.
 
-Register this file in any MCP-capable harness (see examples/mcp.md). The tools
-then appear as recall / remember in every conversation on that harness. Paths
-to the recall/remember scripts and the index are derived from this file's own
-location; override the db/root with the AGENT_MEMORY_DB / AGENT_MEMORY_ROOT
-environment variables if you keep them elsewhere.
+Register this file in any MCP-capable harness. Paths are derived from this
+file's location, so one local clone can serve every harness on the machine.
 
 Protocol: JSON-RPC 2.0, one message per line on stdin/stdout. Only stderr
 may carry logs; stdout is protocol-only.
@@ -22,6 +19,7 @@ import subprocess
 REPO = os.path.dirname(os.path.abspath(__file__))
 RECALL = os.path.join(REPO, "recall")
 REMEMBER = os.path.join(REPO, "remember")
+SESSION_MEMORY = os.path.join(REPO, "session-memory")
 
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -30,12 +28,12 @@ TOOLS = [
         "name": "recall",
         "description": (
             "Search local agent memory: an FTS5 index over the markdown "
-            "artefacts you have indexed (notes, skills, past run artefacts "
-            "such as reviews, findings and verification gates, project docs, "
-            "and episodes). Use at the START of any substantial task that may "
-            "have been seen before: bug classes, review findings, config "
-            "gotchas, past decisions. Results are leads - open the file "
-            "before relying on it."
+            "artefacts configured in corpus.txt, including notes, skills, "
+            "reviews, project docs and evidence-gated episodes. Use at the "
+            "START of any "
+            "substantial task that may have been seen before: bug classes, "
+            "review findings, config gotchas and past decisions. Results are "
+            "leads - open the file before relying on it."
         ),
         "inputSchema": {
             "type": "object",
@@ -44,31 +42,92 @@ TOOLS = [
                 "k": {"type": "integer", "description": "Max results (default 5)"},
                 "source": {
                     "type": "string",
-                    "description": "Optional filter by corpus tag (the left-hand side of a corpus.txt line, e.g. notes, skills, episodes)",
+                    "description": "Optional corpus tag from corpus.txt",
                 },
             },
             "required": ["query"],
         },
     },
     {
+        "name": "session_recall",
+        "description": (
+            "Search user and assistant dialogue from local Hermes, Claude "
+            "Code, Codex and Grok sessions. Use when the user resumes prior "
+            "work, switches harnesses, or asks what was decided in an earlier "
+            "conversation. Retrieval is deterministic SQLite FTS5 with no LLM "
+            "memory layer. Results are transcript leads, not authority."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Distinctive terms from the prior conversation",
+                },
+                "k": {
+                    "type": "integer",
+                    "description": "Max session groups (default 5)",
+                },
+                "harness": {
+                    "type": "string",
+                    "enum": ["hermes", "claude", "codex", "grok"],
+                    "description": "Optional source harness filter",
+                },
+                "current_harness": {
+                    "type": "string",
+                    "description": "Harness of the current session, for exclusion",
+                },
+                "current_session_id": {
+                    "type": "string",
+                    "description": "Current session id, for exclusion",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "session_list",
+        "description": (
+            "List recent local sessions across Hermes, Claude Code, Codex and "
+            "Grok from the shared deterministic session index."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Max sessions (default 20)",
+                },
+                "harness": {
+                    "type": "string",
+                    "enum": ["hermes", "claude", "codex", "grok"],
+                    "description": "Optional source harness filter",
+                },
+                "sync": {
+                    "type": "boolean",
+                    "description": "Refresh changed local session files first",
+                },
+            },
+        },
+    },
+    {
         "name": "remember",
         "description": (
-            "Write an episode to local agent memory. HARD RULES: only at "
-            "verified checkpoints (a signed-off change, an accepted finding, "
-            "or an explicit instruction), never mid-run, never speculative. "
-            "An episode is a durable lesson, not a status report: use the "
-            "one-month test and keep queue, phase, and completion snapshots "
-            "in the tracker or handover. "
-            "evidence is mandatory (commit SHA, file path, PR/issue URL, or "
-            "log path) - the tool refuses without it. Do not write anything "
-            "you would not want in a synced git repo (episodes are plain "
-            "files under version control)."
+            "Write an episode to local agent memory. HARD RULES: only at a "
+            "verified checkpoint or on the operator's explicit instruction, "
+            "never mid-run and never speculatively. An episode is a durable "
+            "lesson, not a status report. Use the one-month test and keep "
+            "queue, phase and completion snapshots in the tracker or "
+            "handover. Evidence is mandatory (commit SHA, "
+            "file path, PR/issue URL, or log path) - the tool refuses "
+            "without it. Never record secrets, credentials, private "
+            "transcripts or information that should not be committed."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "Durable lesson that will still be useful in a month, not current status"},
-                "source": {"type": "string", "description": "Who or what is writing (e.g. an agent name, or 'me')"},
+                "source": {"type": "string", "description": "Which agent or harness is writing"},
                 "evidence": {"type": "string", "description": "Commit SHA, file path, PR/issue URL, or log path"},
                 "tags": {"type": "string", "description": "Optional comma-separated tags"},
             },
@@ -105,6 +164,40 @@ def call_tool(name, args):
         cmd = [sys.executable, RECALL, query, "-k", str(int(args.get("k") or 5))]
         if args.get("source"):
             cmd += ["--source", str(args["source"])]
+        return run_cli(cmd)
+    if name == "session_recall":
+        query = (args.get("query") or "").strip()
+        if not query:
+            return "error: query is required", True
+        cmd = [
+            sys.executable,
+            SESSION_MEMORY,
+            "recall",
+            query,
+            "-k",
+            str(int(args.get("k") or 5)),
+        ]
+        for option in (
+            "harness",
+            "current_harness",
+            "current_session_id",
+        ):
+            value = args.get(option)
+            if value:
+                cmd += ["--" + option.replace("_", "-"), str(value)]
+        return run_cli(cmd)
+    if name == "session_list":
+        cmd = [
+            sys.executable,
+            SESSION_MEMORY,
+            "list",
+            "-n",
+            str(int(args.get("limit") or 20)),
+        ]
+        if args.get("harness"):
+            cmd += ["--harness", str(args["harness"])]
+        if args.get("sync"):
+            cmd.append("--sync")
         return run_cli(cmd)
     if name == "remember":
         cmd = [
@@ -149,7 +242,7 @@ def main():
             respond(msg_id, {
                 "protocolVersion": params.get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agent-memory", "version": "1.0.0"},
+                "serverInfo": {"name": "agent-memory", "version": "1.1.0"},
             })
         elif method in ("notifications/initialized", "notifications/cancelled"):
             continue  # notifications get no response
