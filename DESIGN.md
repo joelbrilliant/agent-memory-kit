@@ -41,6 +41,28 @@ may be stale, mistaken or superseded. A session hit is therefore a lead used to
 resume the work. The current issue, brief, pull request or product source
 remains authoritative. No generated summary is promoted into either index.
 
+## Experimental learned state is separate again
+
+The Slice 1 learning loop uses the session projection as read-only evidence but
+stores its own provisional claims in `learning.db`. This is local canonical
+experimental state, not a rebuildable transcript index. It is never committed
+and can be discarded as one database file set while the experiment remains in
+shadow mode.
+
+Schema version 1 is created idempotently by `_learning_store.py` and recorded
+in `learning_schema`. Ordinary tables hold review batches, immutable batch
+membership, claims, cited evidence snippets and per-message review state. FTS5
+indexes only claim statement and scope fields. Constraints enforce one open
+batch per source session, one normalised claim per operator, bounded domain
+scope keys and unique evidence links. Future schema changes must advance the
+recorded version and migrate in place rather than reinterpret transcript data.
+
+The active harness model may propose a preference, but `learning_loop.py`
+accepts only an exact user-authored quote from the stored batch and creates a
+provisional claim. Retrieval is deterministic, bounded and operator-isolated.
+Automatic review triggers, lifecycle changes and claim promotion belong to a
+later slice.
+
 ## Write discipline
 
 Memory systems rot from garbage writes, not bad reads. A wrong entry in a
@@ -79,17 +101,21 @@ its own removal. There is no sentimental infrastructure.
 
 ## One home per fact
 
-Every fact should live in exactly one place. This store owns exactly one thing:
-episodes. Everything else it touches, it only reads. The corpus globs point at
-files that other systems own; the index never becomes their canonical home. If
-a piece of knowledge belongs in a skill file, a runbook, or a design doc, it
-goes there, not into an episode that quietly forks the truth.
+Every fact should live in exactly one place. The durable memory store owns
+episodes. The separate experimental learning store owns provisional claims and
+their cited evidence snippets. Everything else the kit touches, it only reads.
+The corpus globs point at files that other systems own; the index never becomes
+their canonical home. If a piece of knowledge belongs in a skill file, a
+runbook, or a design doc, it goes there, not into an episode or provisional
+claim that quietly forks the truth.
 
 Derived artefacts are never the source of truth and never synced. `index.db`,
 `sessions.db`, `usage.log`, `hook.log`, and `ingest.log` are all rebuilt per
-machine and gitignored. Clone the repo onto another machine, rebuild the
-indexes against whatever sources exist locally, and you are current. Nothing
-derived travels.
+machine and gitignored. `learning.db` is also local and gitignored, but it is
+not rebuildable because it owns experimental claims. Clone the repo onto
+another machine and rebuild only the derived indexes against sources available
+there. Nothing local travels unless the operator provides a separate secure
+state-transfer mechanism.
 
 ## Rejected paths (named)
 
@@ -116,5 +142,7 @@ not get relitigated by accident.
 - **MCP-only integration.** Rejected as the sole interface. A plain CLI works in
   every harness that can run a shell, with no protocol coupling, and it is
   trivially scriptable and testable. The MCP server ships too (`mcp_server.py`),
-  but as a convenience wrapper over the same CLIs, not as the thing you must
-  adopt. One implementation of the query and write logic; two ways to call it.
+  but as an additional surface, not as the thing you must adopt. Existing
+  memory calls retain their CLI implementation and the learning CLI and MCP
+  tools share the same public Python functions. One implementation per
+  behaviour, with two ways to call it.

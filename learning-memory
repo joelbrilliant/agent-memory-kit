@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""Thin command line client for the portable learning loop."""
+
+import argparse
+import json
+import sys
+
+from learning_loop import run_learning_tool
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="learning-memory")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    tick = subparsers.add_parser("tick")
+    tick.add_argument("--operator-id", default="default")
+    tick.add_argument("--current-harness", required=True)
+    tick.add_argument("--current-session-id", required=True)
+    tick.add_argument("--agent-id", required=True)
+    tick.add_argument("--no-sync", action="store_true")
+    tick.add_argument("--max-user-turns", type=int, default=8)
+    tick.add_argument("--max-chars", type=int, default=6000)
+
+    submit = subparsers.add_parser("submit")
+    submit.add_argument("--batch-id", required=True)
+    submit.add_argument("--agent-id", required=True)
+    submit.add_argument("--proposals-json", required=True)
+
+    context = subparsers.add_parser("context")
+    context.add_argument("--operator-id", default="default")
+    context.add_argument("--requesting-harness", required=True)
+    context.add_argument("--requesting-agent-id", required=True)
+    context.add_argument("--task", required=True)
+    context.add_argument("--scope")
+    context.add_argument("--scope-key")
+    context.add_argument("--max-chars", type=int, default=1200)
+    context.add_argument("--exclude-provisional", action="store_true")
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    if args.command == "tick":
+        result = run_learning_tool(
+            "learn_tick",
+            {
+                "operator_id": args.operator_id,
+                "current_harness": args.current_harness,
+                "current_session_id": args.current_session_id,
+                "agent_id": args.agent_id,
+                "sync": not args.no_sync,
+                "max_user_turns": args.max_user_turns,
+                "max_chars": args.max_chars,
+            },
+        )
+    elif args.command == "submit":
+        try:
+            proposals = json.loads(args.proposals_json)
+        except json.JSONDecodeError as error:
+            result = {
+                "ok": False,
+                "error": {
+                    "code": "invalid_json",
+                    "message": "proposals JSON is invalid: %s" % error.msg,
+                },
+            }
+        else:
+            result = run_learning_tool(
+                "learn_submit",
+                {
+                    "batch_id": args.batch_id,
+                    "agent_id": args.agent_id,
+                    "proposals": proposals,
+                },
+            )
+    else:
+        result = run_learning_tool(
+            "context_packet",
+            {
+                "operator_id": args.operator_id,
+                "requesting_harness": args.requesting_harness,
+                "requesting_agent_id": args.requesting_agent_id,
+                "task": args.task,
+                "scope": args.scope,
+                "scope_key": args.scope_key,
+                "max_chars": args.max_chars,
+                "include_provisional": not args.exclude_provisional,
+            },
+        )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0 if result.get("ok") else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

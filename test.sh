@@ -128,12 +128,12 @@ else
   fail "f: recall of nonexistent term exited nonzero"
 fi
 
-# --- g. deterministic cross-harness session adapter and hook tests ---
+# --- g. deterministic session continuity and learning-loop tests ---
 if PYTHONPATH="$REPO_DIR" python3 -m unittest discover \
   -s "$REPO_DIR/tests" -p 'test_*.py'; then
-  pass "g: cross-harness continuity tests pass"
+  pass "g: cross-harness continuity and learning-loop tests pass"
 else
-  fail "g: cross-harness continuity tests failed"
+  fail "g: cross-harness continuity or learning-loop tests failed"
 fi
 
 echo "----------------------------------------"

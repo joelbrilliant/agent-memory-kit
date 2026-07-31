@@ -2,6 +2,9 @@ index.db
 sessions.db
 sessions.db-shm
 sessions.db-wal
+learning.db
+learning.db-shm
+learning.db-wal
 usage.log
 hook.log
 ingest.log

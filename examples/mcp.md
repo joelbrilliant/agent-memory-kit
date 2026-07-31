@@ -1,14 +1,14 @@
 # MCP server
 
 `mcp_server.py` is a stdio MCP server that exposes document recall, session
-recall and evidence-gated writes as first-class tools in any MCP-capable
-harness. It speaks JSON-RPC 2.0 over
-stdin/stdout, one message per line, and wraps the existing CLIs by subprocess so
-there is exactly one implementation of the query and write logic. Because it
-shells out to `recall`, MCP-driven recalls land in `usage.log` like any other
-deliberate call, which keeps the self-audit honest.
+recall, evidence-gated writes and the experimental learning loop as first-class
+tools in any MCP-capable harness. It speaks JSON-RPC 2.0 over stdin/stdout, one
+message per line. Existing recall tools keep their CLI implementation through
+subprocess, while MCP and CLI learning calls share the public functions in
+`learning_loop.py`.
 
-It registers itself under the server name `agent-memory` and offers four tools:
+It registers itself under the server name `agent-memory` and offers seven
+tools:
 
 - `recall` - inputs: `query` (required), `k` (optional), `source` (optional
   corpus-tag filter).
@@ -18,10 +18,19 @@ It registers itself under the server name `agent-memory` and offers four tools:
 - `session_recall` - inputs: `query` (required), `k`, `harness`,
   `current_harness` and `current_session_id` (optional).
 - `session_list` - inputs: `limit`, `harness` and `sync` (optional).
+- `learn_tick` - inputs: `current_harness`, `current_session_id` and `agent_id`
+  (required), plus bounded review options.
+- `learn_submit` - inputs: `batch_id`, `agent_id` and evidence-backed
+  `proposals` (required).
+- `context_packet` - inputs: `requesting_harness`, `requesting_agent_id` and
+  `task` (required), plus optional scope and character-budget fields.
 
 The server derives the paths to the `recall` and `remember` scripts from its own
 location. Override the index or root with `AGENT_MEMORY_DB` and
-`AGENT_MEMORY_ROOT` if you keep them elsewhere.
+`AGENT_MEMORY_ROOT` if you keep them elsewhere. Use `AGENT_SESSION_DB` and
+`AGENT_LEARNING_DB` for the local session projection and experimental learning
+store. See [../LEARNING-LOOP.md](../LEARNING-LOOP.md) before enabling the
+learning tools.
 
 ## Generic registration
 
@@ -41,8 +50,7 @@ claude mcp add agent-memory -- python3 /path/to/agent-memory-kit/mcp_server.py
 ```
 
 Replace `/path/to/agent-memory-kit` with the absolute path to your clone. After
-adding it, `recall` and `remember` show up as tools in the session. Verify with
-`claude mcp list`.
+adding it, the seven tools show up in the session. Verify with `claude mcp list`.
 
 ## Quick manual smoke test
 
@@ -57,4 +65,5 @@ printf '%s\n%s\n' \
 ```
 
 You should get an `initialize` result followed by a `tools/list` result naming
-`recall`, `remember`, `session_recall` and `session_list`.
+`recall`, `remember`, `session_recall`, `session_list`, `learn_tick`,
+`learn_submit` and `context_packet`.

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Stdio MCP server exposing durable and session memory as first-class tools.
+"""Stdio MCP server exposing durable, session and learned memory tools.
 
-Python stdlib only. Wraps the existing CLI tools via subprocess so there is
-exactly one implementation of query and write logic; MCP-driven recalls land
-in usage.log like any other deliberate call.
+Python stdlib only. Existing recall tools keep their CLI implementation via
+subprocess. Learned-memory tools and the learning CLI share the public
+functions in learning_loop.py.
 
 Register this file in any MCP-capable harness. Paths are derived from this
 file's location, so one local clone can serve every harness on the machine.
@@ -15,6 +15,8 @@ import os
 import sys
 import json
 import subprocess
+
+from learning_loop import run_learning_tool
 
 REPO = os.path.dirname(os.path.abspath(__file__))
 RECALL = os.path.join(REPO, "recall")
@@ -111,6 +113,116 @@ TOOLS = [
         },
     },
     {
+        "name": "learn_tick",
+        "description": (
+            "Create or return a bounded review batch from the shared local "
+            "session projection. The active agent reviews the evidence and "
+            "submits only explicit operator preference proposals."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operator_id": {"type": "string", "default": "default"},
+                "current_harness": {"type": "string"},
+                "current_session_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "sync": {"type": "boolean", "default": True},
+                "max_user_turns": {"type": "integer", "default": 8},
+                "max_chars": {"type": "integer", "default": 6000},
+            },
+            "required": ["current_harness", "current_session_id", "agent_id"],
+        },
+    },
+    {
+        "name": "learn_submit",
+        "description": (
+            "Validate evidence-backed explicit preference proposals and "
+            "atomically complete one review batch. An empty proposal list "
+            "records that the batch contained nothing reusable."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "batch_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "proposals": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["preference"]},
+                            "statement": {"type": "string"},
+                            "scope": {
+                                "type": "string",
+                                "enum": [
+                                    "global",
+                                    "communication",
+                                    "work_style",
+                                    "domain",
+                                ],
+                            },
+                            "scope_key": {"type": "string"},
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["explicit"],
+                            },
+                            "evidence": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "harness": {"type": "string"},
+                                        "session_id": {"type": "string"},
+                                        "message_key": {"type": "string"},
+                                        "quote": {"type": "string"},
+                                    },
+                                    "required": [
+                                        "harness",
+                                        "session_id",
+                                        "message_key",
+                                        "quote",
+                                    ],
+                                },
+                            },
+                        },
+                        "required": [
+                            "kind",
+                            "statement",
+                            "scope",
+                            "confidence",
+                            "evidence",
+                        ],
+                    },
+                },
+            },
+            "required": ["batch_id", "agent_id", "proposals"],
+        },
+    },
+    {
+        "name": "context_packet",
+        "description": (
+            "Return a compact deterministic shadow-mode context packet from "
+            "the local learning store. The caller decides whether to use it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operator_id": {"type": "string", "default": "default"},
+                "requesting_harness": {"type": "string"},
+                "requesting_agent_id": {"type": "string"},
+                "task": {"type": "string"},
+                "scope": {
+                    "type": "string",
+                    "enum": ["global", "communication", "work_style", "domain"],
+                },
+                "scope_key": {"type": "string"},
+                "max_chars": {"type": "integer", "default": 1200},
+                "include_provisional": {"type": "boolean", "default": True},
+            },
+            "required": ["requesting_harness", "requesting_agent_id", "task"],
+        },
+    },
+    {
         "name": "remember",
         "description": (
             "Write an episode to local agent memory. HARD RULES: only at a "
@@ -157,6 +269,10 @@ def run_cli(cmd):
 
 
 def call_tool(name, args):
+    if name in {"learn_tick", "learn_submit", "context_packet"}:
+        result = run_learning_tool(name, args)
+        rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        return rendered, not result.get("ok")
     if name == "recall":
         query = (args.get("query") or "").strip()
         if not query:
@@ -242,7 +358,7 @@ def main():
             respond(msg_id, {
                 "protocolVersion": params.get("protocolVersion", PROTOCOL_VERSION),
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agent-memory", "version": "1.1.0"},
+                "serverInfo": {"name": "agent-memory", "version": "1.2.0"},
             })
         elif method in ("notifications/initialized", "notifications/cancelled"):
             continue  # notifications get no response

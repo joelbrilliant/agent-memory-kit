@@ -2,14 +2,16 @@
 
 ## What this is
 
-Local, boring-on-purpose memory for AI agents. It gives every local harness
-three shared capabilities:
+Local, boring-on-purpose memory for AI agents. It gives participating local
+harnesses four shared capabilities:
 
 - BM25 full-text search over the markdown you already have (`recall`)
 - an episodic write path that refuses to record anything without evidence
   (`remember`)
 - on-demand recall over local Hermes, Claude Code, Codex and Grok dialogue
   (`session-memory`)
+- an experimental, evidence-backed learning loop for explicit operator
+  preferences (`learning-memory`)
 
 Both indexes use plain SQLite FTS5. There are no embeddings, no vector
 database, no daemon, no external service and no LLM in the indexing or
@@ -111,6 +113,24 @@ The default source paths are `~/.hermes/state.db`, `~/.claude/projects`,
 `~/.codex/sessions` and `~/.grok/sessions`. Missing harnesses are skipped.
 Nothing from `sessions.db` is committed or sent anywhere.
 
+## Experimental learning loop
+
+Slice 1 is an experimental but working cross-harness learning loop. One
+harness can review an exact operator message, submit a provisional preference
+claim, and another can retrieve a compact context packet with an evidence
+reference. The core validates the evidence and stores only the cited quote in
+the local, ignored `learning.db`.
+
+It stays in shadow mode. Nothing is injected automatically, no model runs
+inside the core, and no canonical memory or skill file is edited. Automatic
+lifecycle-triggered review across harnesses is Slice 2 and is not included.
+Participation is not zero-configuration: each harness needs at least one
+usable integration surface such as MCP, shell access, a lifecycle hook,
+readable transcripts, or an export API.
+
+See [LEARNING-LOOP.md](LEARNING-LOOP.md) for setup, doctor checks, CLI and MCP
+usage, harness adapter examples, and the runnable synthetic round trip.
+
 ## The two rules that matter
 
 **Evidence-gated writes.** `remember` will not write an episode without
@@ -149,6 +169,8 @@ Each is a short, practical file under [examples/](examples/):
   copy-paste system-prompt snippet for any agent harness.
 - [examples/session-continuity.md](examples/session-continuity.md) - session
   source paths, privacy boundaries, verification and per-harness behaviour.
+- [examples/learning-loop-e2e.py](examples/learning-loop-e2e.py) - a synthetic
+  Codex-to-Hermes round trip through the published CLI.
 
 ## Self-audit
 
@@ -173,14 +195,18 @@ evidence. It never deletes anything itself. See
 - Session continuity is local to one machine. If harness histories live on
   different machines, each machine has its own index unless you deliberately
   provide a secure shared filesystem. The kit never syncs raw transcripts.
+- The learning loop accepts explicit preference evidence only and creates
+  provisional claims. Confirmation, rejection, supersession, deletion and
+  automatic lifecycle review are not implemented in Slice 1.
 
 ## Requirements
 
-- Python 3.8 or newer.
+- Python 3.9 or newer.
 - SQLite compiled with FTS5. This is standard on macOS and most Linux
   distributions. The quickstart command above verifies it.
 
-No other dependencies.
+No other dependencies. The repository is a script-based kit rather than a pip
+package and is distributed under the MIT licence in [LICENSE](LICENSE).
 
 ## A note on scale
 
