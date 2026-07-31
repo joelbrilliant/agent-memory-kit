@@ -1,9 +1,9 @@
 # agent-memory-kit - design
 
 This is the philosophy behind the kit. The code is small on purpose; the
-discipline is the point. Three ideas carry it: recall before write, evidence
-gates the write path, and the whole thing must justify its own existence or be
-deleted.
+discipline is the point. Four ideas carry it: recall before write, exact
+dialogue stays separate from durable truth, evidence gates the write path, and
+the whole thing must justify its own existence or be deleted.
 
 ## Recall first
 
@@ -26,6 +26,20 @@ Only after recall is working does a write path earn its place. The one thing
 the existing artefacts miss is episodes: short, dated notes of what happened
 and what to do differently next time. That gap is what `remember` fills, and
 nothing more.
+
+## Exact dialogue is a separate index
+
+Cross-harness continuity is a retrieval problem, not a licence to turn every
+conversation into durable memory. `session-memory` indexes eligible user and
+assistant dialogue from local Hermes, Claude Code, Codex and Grok histories
+into a separate gitignored SQLite database. It excludes system prompts,
+reasoning, tools, attachments, generated notes, non-human jobs and
+secret-shaped messages.
+
+The split matters. A transcript can recover what someone actually said, but it
+may be stale, mistaken or superseded. A session hit is therefore a lead used to
+resume the work. The current issue, brief, pull request or product source
+remains authoritative. No generated summary is promoted into either index.
 
 ## Write discipline
 
@@ -72,9 +86,10 @@ a piece of knowledge belongs in a skill file, a runbook, or a design doc, it
 goes there, not into an episode that quietly forks the truth.
 
 Derived artefacts are never the source of truth and never synced. `index.db`,
-`usage.log`, `hook.log`, and `ingest.log` are all rebuilt per machine and
-gitignored. Clone the repo onto another machine, rebuild the index against
-whatever corpus exists locally, and you are current. Nothing derived travels.
+`sessions.db`, `usage.log`, `hook.log`, and `ingest.log` are all rebuilt per
+machine and gitignored. Clone the repo onto another machine, rebuild the
+indexes against whatever sources exist locally, and you are current. Nothing
+derived travels.
 
 ## Rejected paths (named)
 
@@ -92,6 +107,11 @@ not get relitigated by accident.
   single-operator setup. It adds moving parts that all have to be correct before
   any of it helps. Start with a flat index and one write path; revisit only if
   that plateaus against real usage.
+
+- **LLM summaries as the cross-harness archive.** Rejected. A summary adds
+  interpretation, can drift, and cannot replace the underlying conversation.
+  Index eligible dialogue directly, retrieve small excerpts on demand, and
+  verify against the live artefact.
 
 - **MCP-only integration.** Rejected as the sole interface. A plain CLI works in
   every harness that can run a shell, with no protocol coupling, and it is

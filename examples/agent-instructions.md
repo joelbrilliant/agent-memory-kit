@@ -19,6 +19,15 @@ with the absolute path to your clone.
 > relying on anything in it. If nothing relevant comes back, proceed; a miss is
 > normal.
 >
+> When the operator resumes prior work, switches harnesses, or asks what was
+> decided earlier, search local dialogue before asking them to repeat context:
+>
+>     /path/to/agent-memory-kit/session-memory recall \
+>       "distinctive terms from the earlier conversation" -k 5
+>
+> Session hits are transcript leads, not authority. Use them to locate the
+> work, then verify the current issue, brief, pull request or live artefact.
+>
 > Write a memory episode only at a verified checkpoint: a change that has been
 > signed off, a review finding that has been accepted, or an explicit
 > instruction to record something. When you do, you must supply evidence (a file
@@ -35,9 +44,9 @@ with the absolute path to your clone.
 >
 > Episodes record lessons about the WORK. Facts about the OPERATOR - their
 > preferences, habits, current projects, personal context - do not belong in
-> episodes. Those live in the user-model layer or the hand-written handbook
-> (see honcho.md). One fact, one home; do not open a second write path for
-> operator facts just because this one is convenient.
+> episodes. Those live in the hand-written operator handbook or an explicitly
+> chosen user-model layer. One fact, one home; do not open a second write path
+> for operator facts just because this one is convenient.
 >
 > An episode is a LESSON, not a status report. The test: will this still be
 > true and useful in a month? "Phase 1 completed, queue at X" belongs in your

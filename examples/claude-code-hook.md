@@ -1,11 +1,11 @@
 # Auto-recall in Claude Code
 
 `hooks/claude-recall-hook.py` is a Claude Code `UserPromptSubmit` hook. On every
-prompt you submit, it queries the index with the content words of your prompt
-and, if anything scores well enough, injects the top hits as extra context
-before the model sees your message. When nothing scores past the threshold, or
-the prompt is too short, or the index is missing, it stays silent and never
-blocks the prompt.
+prompt you submit, it queries local session history and the document index with
+the content words of your prompt. If anything scores well enough, it injects a
+small excerpt before the model sees your message. Session hits take priority
+over document hits. When nothing is relevant, the prompt is too short, or an
+index is missing, it stays silent and never blocks the prompt.
 
 ## Wiring it up
 
@@ -30,11 +30,11 @@ Replace `/path/to/agent-memory-kit` with the absolute path to your clone.
 }
 ```
 
-The hook derives the index path from its own location, so it finds `index.db`
-in the repo without further configuration. If you keep the index elsewhere, set
-`AGENT_MEMORY_DB` in the hook's environment. Reference the hook in place - do
-NOT copy the file into `~/.claude/` or elsewhere, because a moved copy derives
-wrong paths for both the index and the `recall` command it advertises.
+The hook derives both index paths from its own location, so it finds `index.db`
+and `sessions.db` without further configuration. If you keep them elsewhere,
+set `AGENT_MEMORY_DB` and `AGENT_SESSION_DB` in the hook's environment.
+Reference the hook in place. Do not copy it into `~/.claude/` because a moved
+copy derives the wrong paths.
 
 ## Hits are hints
 
@@ -59,7 +59,9 @@ The tuning constants are at the top of `hooks/claude-recall-hook.py`:
   deepening to -10.0 at ~2,500 docs). To pin it manually, set the
   `SCORE_CEILING` env var in the hook's environment (e.g. "-6.0"): more
   negative injects only on strong matches, toward zero injects more freely.
-- `TOP_K` (default 3): how many hits to inject at most.
+- `TOP_DOCS` (default 3): maximum document hits when no session hit qualifies.
+- `TOP_SESSIONS` (default 2): maximum session groups to inject.
+- `MAX_CONTEXT_CHARS` (default 1,800): hard cap on injected context.
 - `MAX_TERMS` (default 15): cap on how many content words from the prompt become
   search terms.
 

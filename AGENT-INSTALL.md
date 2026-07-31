@@ -2,8 +2,9 @@
 
 This file is written for you, the agent. Your operator has shared this repo and
 wants the memory kit installed. Follow these steps in order. Two rules bind you
-throughout: never index anything without the operator approving the corpus
-list, and never claim a step worked without showing its output.
+throughout: never index documents or local chat history without the operator
+approving the source list, and never claim a step worked without showing its
+output.
 
 ## 1. Get the operator their own copy, then check it
 
@@ -76,7 +77,45 @@ missing a source or the query needs the document's own vocabulary - tune and
 re-run. Do not declare the install done on a 0-hit index. Show the operator
 the actual recall output.
 
-## 5. Wire your own harness
+## 5. Approve and build the local session index
+
+Session continuity is a separate local index over user and assistant dialogue.
+It does not commit or upload transcripts. Before running it, show the operator
+which of these default paths exist and get explicit approval:
+
+- Hermes Agent: `~/.hermes/state.db`
+- Claude Code: `~/.claude/projects`
+- Codex: `~/.codex/sessions`
+- Grok: `~/.grok/sessions`
+
+Do not search for or add other chat archives without approval. Missing
+harnesses are normal and are skipped. The index deliberately excludes system
+prompts, reasoning, tool calls and outputs, attachments, generated compaction
+notes, non-human Hermes jobs, Claude sidechains, Grok synthetic messages and
+secret-shaped messages. Claude generated compaction summaries and metadata
+injections are excluded by their native record flags, not by guessing from
+their text.
+
+After approval:
+
+```
+./session-memory sync
+./session-memory list -n 20
+```
+
+Ask the operator for one distinctive conversation from at least two installed
+harnesses, then verify both:
+
+```
+./session-memory recall "distinctive terms from conversation one" -k 5
+./session-memory recall "distinctive terms from conversation two" -k 5
+```
+
+The correct harness and conversation must appear. A transcript hit is a lead,
+not authority. The agent must still check the live task artefact before acting.
+See [examples/session-continuity.md](examples/session-continuity.md).
+
+## 6. Wire your own harness
 
 See [examples/harnesses.md](examples/harnesses.md) for Claude Code, Hermes
 Agent, Codex, and generic shell harnesses. Minimum viable wiring is the
@@ -85,7 +124,7 @@ copy-paste snippet in
 own standing instructions or skill system: recall 1-2 queries before
 substantial work; `remember` only at verified checkpoints, with evidence.
 
-## 6. Schedule the maintenance
+## 7. Schedule the maintenance
 
 - Daily index rebuild: [examples/scheduled-ingest.md](examples/scheduled-ingest.md).
 - A self-audit about two weeks out that is allowed to recommend deleting the
@@ -94,8 +133,9 @@ substantial work; `remember` only at verified checkpoints, with evidence.
   wherever your operator tracks future work. Do not skip this step - memory
   that never has to prove itself becomes rot.
 
-## 7. Report
+## 8. Report
 
-Tell the operator: what was indexed (counts by tag), the verification results
-from step 4, what was wired where, when the daily rebuild runs, and the
-self-audit date. Include the evidence, not just the claims.
+Tell the operator: what was indexed (document counts by tag and session counts
+by harness), the verification results from steps 4 and 5, what was wired where,
+when the daily rebuild runs, and the self-audit date. Include the evidence, not
+just the claims.
