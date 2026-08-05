@@ -2,6 +2,7 @@ index.db
 sessions.db
 sessions.db-shm
 sessions.db-wal
+session-index.db
 learning.db
 learning.db-shm
 learning.db-wal
@@ -13,3 +14,4 @@ __pycache__/
 corpus.txt
 exclude.txt
 hook-exclude.txt
+.scratch/

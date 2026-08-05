@@ -118,14 +118,15 @@ See [examples/session-continuity.md](examples/session-continuity.md).
 ## 6. Offer the experimental learning loop
 
 Do not enable learning automatically as part of continuity setup. Show the
-operator [LEARNING-LOOP.md](LEARNING-LOOP.md), explain that Slice 1 stores
+operator [LEARNING-LOOP.md](LEARNING-LOOP.md), explain that the experiment stores
 provisional preference claims in a separate local database, and get explicit
 approval before running a live `learn_tick`.
 
 If approved, run the doctor checks and synthetic example first. Then wire the
-three learning tools through MCP or shell only where the installed harness has
-a supported integration surface. No lifecycle-triggered review hook is
-included in Slice 1.
+four learning tools through MCP or shell only where the installed harness has a
+supported integration surface. Manual review remains the default. Enable the
+bounded prompt-hook trigger with `AGENT_MEMORY_AUTOMATIC_LEARNING=1` only when
+the operator explicitly approves automatic learning for that harness.
 
 ## 7. Wire your own harness
 

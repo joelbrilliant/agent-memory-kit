@@ -2,7 +2,7 @@
 
 ## Status and boundary
 
-Slice 1 is an experimental but working local learning loop for explicit
+This is an experimental but working local learning loop for explicit
 operator preferences. It uses the existing read-only session projection as
 evidence, stores provisional claims in a separate SQLite database, and returns
 deterministic context packets to any participating harness.
@@ -13,9 +13,13 @@ transaction boundary, allowed fields, secret scan, claim deduplication,
 operator isolation and output size. It does not call a model or network
 service.
 
-Automatic lifecycle-triggered review across harnesses is Slice 2 and is not
-included. Slice 1 does not inject packets automatically, confirm claims, edit
-canonical memory, create skills, or modify source transcripts.
+Manual review is the default. A supported prompt hook can opt into bounded
+automatic review with `AGENT_MEMORY_AUTOMATIC_LEARNING=1`. After eight persisted
+unseen user turns, the hook may surface one complete review batch to the active
+agent. On an ordinary substantial prompt it may also inject task-matched learned
+context within the shared 1,800-character recall cap. The hook does not call a
+model itself. The system still does not confirm claims, edit canonical memory,
+create skills, or modify source transcripts.
 
 ## Requirements
 
@@ -49,8 +53,10 @@ export AGENT_LEARNING_DB=/private/local/path/learning.db
 
 Register `mcp_server.py` in MCP-capable harnesses as described in
 [examples/mcp.md](examples/mcp.md), or call `learning-memory` directly from a
-shell-capable harness. Do not add an automatic post-turn or session-end hook in
-Slice 1. Call the tools manually at an approved review checkpoint.
+shell-capable harness. Call the tools manually at an approved review checkpoint
+unless the operator explicitly approves the bounded automatic mode. When
+approved, set `AGENT_MEMORY_AUTOMATIC_LEARNING=1` only in the shared prompt
+hook's environment. Do not create a second post-turn or session-end learner.
 
 ## Doctor checks
 
@@ -59,7 +65,7 @@ Run these from the repository root before wiring a harness:
 ```sh
 python3 -c "import sys; assert sys.version_info >= (3, 9); print(sys.version.split()[0])"
 python3 -c "import sqlite3; c=sqlite3.connect(':memory:'); c.execute('CREATE VIRTUAL TABLE t USING fts5(x)'); print('fts5 ok')"
-python3 -m py_compile learning_loop.py _learning_policy.py _learning_store.py mcp_server.py learning-memory
+python3 -m py_compile learning_loop.py _learning_policy.py _learning_store.py mcp_server.py learning-memory hooks/claude-recall-hook.py
 ./test.sh
 python3 examples/learning-loop-e2e.py
 git check-ignore sessions.db sessions.db-shm sessions.db-wal learning.db learning.db-shm learning.db-wal
@@ -127,16 +133,28 @@ The packet labels the claim `provisional`, includes its scope and carries a
 compact evidence reference. The requesting harness decides whether to show or
 use it.
 
+Forget one claim and its cited evidence:
+
+```sh
+./learning-memory forget \
+  --operator-id default \
+  --claim-id CLAIM_ID
+```
+
+The receipt contains identifiers and the outcome, not the deleted preference
+text. Deleting a claim does not delete or rewrite its source transcript.
+
 ## MCP surface
 
-The same public functions are exposed as three stdio MCP tools:
+The same public functions are exposed as four stdio MCP tools:
 
 - `learn_tick`
 - `learn_submit`
 - `context_packet`
+- `learn_forget`
 
 The CLI and MCP paths return the same structured result and stable error
-shape. `tests/test_learning_loop_integration.py` exercises all three through
+shape. `tests/test_learning_loop_integration.py` exercises all four through
 the JSON-RPC boundary.
 
 ## Harness adapter examples
@@ -148,13 +166,14 @@ universal support:
   JSONL transcript adapter can supply evidence after the operator approves the
   Codex session path.
 - Hermes Agent: register the stdio MCP server when the installed version
-  supports MCP, or expose the CLI through a local skill. No Hermes import is
-  required by the learning core.
+  supports MCP, or expose the CLI through a local skill. Its `pre_llm_call`
+  shell hook can run the opt-in automatic mode. No Hermes import is required by
+  the learning core.
 - Claude Code: register the stdio MCP server or invoke the CLI from an approved
-  command or skill. The existing prompt hook performs recall only and must not
-  be treated as an automatic learning trigger.
+  command or skill. The existing prompt hook can run automatic learning only
+  when its environment flag is explicitly enabled.
 - Grok: use the CLI from a shell-capable session or register the MCP server
-  where supported. The existing shell hook performs recall only.
+  where supported. A compatible shell hook can use the same opt-in flag.
 
 If a harness has neither MCP nor shell access, it needs another explicit seam
 such as a readable transcript location or export API plus a small adapter. Do
@@ -179,6 +198,7 @@ packet. The temporary transcript and databases are deleted when it exits.
 the cited evidence snippets, not full transcript bodies. The database and its
 SQLite sidecars are ignored by Git and forced to owner-only mode.
 
-Claim-level deletion and source cascade deletion are Slice 2 work. Until then,
-remove the local `learning.db`, `learning.db-shm` and `learning.db-wal` files to
-discard all experimental learning state.
+Use `learning-memory forget` or the `learn_forget` MCP tool for claim-level
+deletion. Source-transcript cascade deletion is not implemented. Remove the
+local `learning.db`, `learning.db-shm` and `learning.db-wal` files only when the
+operator wants to discard all experimental learning state.

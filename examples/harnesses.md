@@ -50,14 +50,15 @@ For harnesses that speak MCP but not shell, use [mcp.md](mcp.md).
 
 ## Experimental learning loop
 
-The optional Slice 1 learning loop reuses the same shell and MCP seams. Codex,
+The optional learning loop reuses the same shell and MCP seams. Codex,
 Hermes Agent, Claude Code and Grok can call `learn_tick`, `learn_submit` and
-`context_packet` through MCP where supported, or the equivalent
+`context_packet` and `learn_forget` through MCP where supported, or the equivalent
 `learning-memory` commands from a shell or skill.
 
-This does not make learning automatic. Each harness must expose at least one
-usable integration surface and its transcript source must be approved and
-readable by the shared session projection. Existing Claude and Hermes/Grok
-hooks perform recall only. Automatic lifecycle-triggered review is Slice 2 and
-is not included. See [../LEARNING-LOOP.md](../LEARNING-LOOP.md) for the exact
-adapter examples and safety boundary.
+Learning remains manual by default. Each harness must expose at least one usable
+integration surface and its transcript source must be approved and readable by
+the shared session projection. The shared Claude and Hermes/Grok-compatible hook
+can run bounded automatic review only when
+`AGENT_MEMORY_AUTOMATIC_LEARNING=1` is explicitly set in that hook's
+environment. See [../LEARNING-LOOP.md](../LEARNING-LOOP.md) for the exact safety
+boundary.

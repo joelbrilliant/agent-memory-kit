@@ -166,7 +166,7 @@ def validate_proposals(
         if confidence != "explicit":
             raise LearningError(
                 "inferred_not_allowed",
-                "Slice 1 accepts only explicit preference claims",
+                "automatic learning accepts only explicit preference claims",
             )
         evidence_refs = proposal.get("evidence")
         if not isinstance(evidence_refs, list) or not evidence_refs:
@@ -210,7 +210,7 @@ def validate_proposals(
             if role != "user":
                 raise LearningError(
                     "evidence_not_user",
-                    "Slice 1 evidence must be operator-authored",
+                    "evidence must be operator-authored",
                 )
             if not safe_projected_row(role, content):
                 raise LearningError(
@@ -254,6 +254,11 @@ def validate_proposals(
                     "message_content_hash": member["message_content_hash"],
                     "timestamp": float(source[2] or 0),
                 }
+            )
+        if statement not in {item["quote"] for item in evidence}:
+            raise LearningError(
+                "statement_not_evidence_quote",
+                "claim statement must exactly match one normalised operator evidence quote",
             )
         validated.append(
             {

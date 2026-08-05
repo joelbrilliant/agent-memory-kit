@@ -43,13 +43,13 @@ remains authoritative. No generated summary is promoted into either index.
 
 ## Experimental learned state is separate again
 
-The Slice 1 learning loop uses the session projection as read-only evidence but
-stores its own provisional claims in `learning.db`. This is local canonical
-experimental state, not a rebuildable transcript index. It is never committed
+The experimental learning loop uses the session projection as read-only
+evidence but stores its own provisional claims in `learning.db`. This is local
+canonical experimental state, not a rebuildable transcript index. It is never committed
 and can be discarded as one database file set while the experiment remains in
 shadow mode.
 
-Schema version 1 is created idempotently by `_learning_store.py` and recorded
+Schema version 2 is created idempotently by `_learning_store.py` and recorded
 in `learning_schema`. Ordinary tables hold review batches, immutable batch
 membership, claims, cited evidence snippets and per-message review state. FTS5
 indexes only claim statement and scope fields. Constraints enforce one open
@@ -60,8 +60,9 @@ recorded version and migrate in place rather than reinterpret transcript data.
 The active harness model may propose a preference, but `learning_loop.py`
 accepts only an exact user-authored quote from the stored batch and creates a
 provisional claim. Retrieval is deterministic, bounded and operator-isolated.
-Automatic review triggers, lifecycle changes and claim promotion belong to a
-later slice.
+An opt-in prompt hook can surface a complete batch after eight unseen user turns
+and inject task-matched provisional context. Claim confirmation, contradiction,
+supersession and promotion remain later work.
 
 ## Write discipline
 

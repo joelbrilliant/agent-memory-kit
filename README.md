@@ -115,21 +115,37 @@ Nothing from `sessions.db` is committed or sent anywhere.
 
 ## Experimental learning loop
 
-Slice 1 is an experimental but working cross-harness learning loop. One
+This is an experimental but working cross-harness learning loop. One
 harness can review an exact operator message, submit a provisional preference
 claim, and another can retrieve a compact context packet with an evidence
 reference. The core validates the evidence and stores only the cited quote in
 the local, ignored `learning.db`.
 
-It stays in shadow mode. Nothing is injected automatically, no model runs
-inside the core, and no canonical memory or skill file is edited. Automatic
-lifecycle-triggered review across harnesses is Slice 2 and is not included.
-Participation is not zero-configuration: each harness needs at least one
-usable integration surface such as MCP, shell access, a lifecycle hook,
-readable transcripts, or an export API.
+It stays in shadow mode by default. No model runs inside the core, and no
+canonical memory or skill file is edited. Participation is not
+zero-configuration: each harness needs at least one usable integration surface
+such as MCP, shell access, a lifecycle hook, readable transcripts, or an export
+API.
 
 See [LEARNING-LOOP.md](LEARNING-LOOP.md) for setup, doctor checks, CLI and MCP
 usage, harness adapter examples, and the runnable synthetic round trip.
+
+Automatic learning is off unless `AGENT_MEMORY_AUTOMATIC_LEARNING=1` is set for
+the shared prompt hook. When enabled, the hook offers one bounded review batch
+after eight persisted unseen user turns. On ordinary substantial prompts it may
+inject up to 600 characters of task-matched learning context inside the existing
+1,800-character recall budget. It does not call a model, edit a skill, or write
+to a transcript or canonical memory file.
+
+Forget a learned claim and its evidence:
+
+```
+./learning-memory forget --operator-id default --claim-id CLAIM_ID
+```
+
+`AGENT_LEARNING_DB` overrides the local learning database path. The MCP server
+exposes the equivalent `learn_tick`, `learn_submit`, `learn_forget`, and
+`context_packet` tools.
 
 ## The two rules that matter
 
@@ -196,8 +212,9 @@ evidence. It never deletes anything itself. See
   different machines, each machine has its own index unless you deliberately
   provide a secure shared filesystem. The kit never syncs raw transcripts.
 - The learning loop accepts explicit preference evidence only and creates
-  provisional claims. Confirmation, rejection, supersession, deletion and
-  automatic lifecycle review are not implemented in Slice 1.
+  provisional claims. Confirmation, contradiction and supersession workflows
+  are not implemented. Claim-level deletion is available. Automatic review is
+  opt-in and requires a supported prompt hook.
 
 ## Requirements
 

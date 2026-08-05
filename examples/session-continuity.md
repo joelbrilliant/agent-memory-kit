@@ -64,7 +64,9 @@ filesystem.
 ```
 
 Initial sync scans all available local histories. Later syncs fingerprint
-sources and replace only changed sessions.
+sources and replace only changed sessions. Recall preserves every indexed source
+session but collapses identical matched excerpts, so resumed or migrated copies
+do not consume multiple result slots.
 
 ## Agent behaviour
 
@@ -78,7 +80,10 @@ The standing rule is:
 The prompt hook can also inject a small relevant excerpt automatically. It
 excludes the current session when the harness supplies a session ID, prefers
 session hits over document hits, and caps injected context at 1,800 characters.
-Short prompts and weak one-term matches stay silent.
+Short prompts, weak one-term matches and generic agent-update wording stay
+silent. Generated maintenance prompts are excluded before recall or learning,
+and skills remain available to deliberate recall without being ambiently
+injected as document hits.
 
 ## Acceptance test
 

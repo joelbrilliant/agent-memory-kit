@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 DEFAULT_LEARNING_DB = Path(__file__).resolve().parent / "learning.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def learning_db_path() -> Path:
@@ -20,7 +20,7 @@ def enforce_permissions(path: Path) -> None:
             candidate.chmod(0o600)
 
 
-def _ensure_schema(conn: sqlite3.Connection) -> None:
+def _create_schema_v2(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS learning_schema (
@@ -34,9 +34,40 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             source_harness TEXT NOT NULL,
             source_session_id TEXT NOT NULL,
             reviewing_agent_id TEXT NOT NULL,
-            status TEXT NOT NULL CHECK (status IN ('open', 'completed')),
+            status TEXT NOT NULL CHECK (
+                status IN (
+                    'open', 'completed', 'skipped_unrenderable',
+                    'delivery_failed'
+                )
+            ),
             created_at REAL NOT NULL,
-            completed_at REAL
+            surfaced_at REAL,
+            surface_count INTEGER NOT NULL DEFAULT 0 CHECK (
+                surface_count BETWEEN 0 AND 2
+            ),
+            completed_at REAL,
+            terminal_at REAL,
+            terminal_reason TEXT,
+            CHECK (
+                (
+                    status = 'open'
+                    AND completed_at IS NULL
+                    AND terminal_at IS NULL
+                    AND terminal_reason IS NULL
+                )
+                OR (
+                    status = 'completed'
+                    AND completed_at IS NOT NULL
+                    AND terminal_at IS NULL
+                    AND terminal_reason IS NULL
+                )
+                OR (
+                    status IN ('skipped_unrenderable', 'delivery_failed')
+                    AND completed_at IS NULL
+                    AND terminal_at IS NOT NULL
+                    AND length(trim(terminal_reason)) > 0
+                )
+            )
         );
 
         CREATE UNIQUE INDEX IF NOT EXISTS one_open_review_batch
@@ -118,7 +149,10 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             message_content_hash TEXT NOT NULL,
             batch_id TEXT NOT NULL,
             disposition TEXT NOT NULL CHECK (
-                disposition IN ('reviewed', 'baseline_skipped')
+                disposition IN (
+                    'reviewed', 'baseline_skipped', 'skipped_unrenderable',
+                    'delivery_failed'
+                )
             ),
             recorded_at REAL NOT NULL,
             PRIMARY KEY (
@@ -183,6 +217,202 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         END;
         """
     )
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("DROP INDEX IF EXISTS one_open_review_batch")
+        conn.execute(
+            """
+            CREATE TABLE review_batches_v2 (
+                id TEXT PRIMARY KEY,
+                operator_id TEXT NOT NULL,
+                source_harness TEXT NOT NULL,
+                source_session_id TEXT NOT NULL,
+                reviewing_agent_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (
+                    status IN (
+                        'open', 'completed', 'skipped_unrenderable',
+                        'delivery_failed'
+                    )
+                ),
+                created_at REAL NOT NULL,
+                surfaced_at REAL,
+                surface_count INTEGER NOT NULL DEFAULT 0 CHECK (
+                    surface_count BETWEEN 0 AND 2
+                ),
+                completed_at REAL,
+                terminal_at REAL,
+                terminal_reason TEXT,
+                CHECK (
+                    (
+                        status = 'open'
+                        AND completed_at IS NULL
+                        AND terminal_at IS NULL
+                        AND terminal_reason IS NULL
+                    )
+                    OR (
+                        status = 'completed'
+                        AND completed_at IS NOT NULL
+                        AND terminal_at IS NULL
+                        AND terminal_reason IS NULL
+                    )
+                    OR (
+                        status IN ('skipped_unrenderable', 'delivery_failed')
+                        AND completed_at IS NULL
+                        AND terminal_at IS NOT NULL
+                        AND length(trim(terminal_reason)) > 0
+                    )
+                )
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE review_batch_items_v2 (
+                batch_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                message_content_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                timestamp REAL NOT NULL,
+                order_index INTEGER NOT NULL,
+                PRIMARY KEY (batch_id, order_index),
+                UNIQUE (
+                    batch_id,
+                    harness,
+                    session_id,
+                    message_key,
+                    message_content_hash
+                ),
+                FOREIGN KEY (batch_id)
+                    REFERENCES review_batches_v2(id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE learning_message_state_v2 (
+                operator_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                message_content_hash TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                disposition TEXT NOT NULL CHECK (
+                    disposition IN (
+                        'reviewed', 'baseline_skipped',
+                        'skipped_unrenderable', 'delivery_failed'
+                    )
+                ),
+                recorded_at REAL NOT NULL,
+                PRIMARY KEY (
+                    operator_id,
+                    harness,
+                    session_id,
+                    message_key,
+                    message_content_hash
+                ),
+                FOREIGN KEY (batch_id) REFERENCES review_batches_v2(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO review_batches_v2(
+                id, operator_id, source_harness, source_session_id,
+                reviewing_agent_id, status, created_at, completed_at
+            )
+            SELECT
+                id, operator_id, source_harness, source_session_id,
+                reviewing_agent_id, status, created_at, completed_at
+            FROM review_batches
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO review_batch_items_v2
+            SELECT * FROM review_batch_items
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO learning_message_state_v2
+            SELECT * FROM learning_message_state
+            """
+        )
+        conn.execute("DROP TABLE learning_message_state")
+        conn.execute("DROP TABLE review_batch_items")
+        conn.execute("DROP TABLE review_batches")
+        conn.execute("ALTER TABLE review_batches_v2 RENAME TO review_batches")
+        conn.execute(
+            "ALTER TABLE review_batch_items_v2 RENAME TO review_batch_items"
+        )
+        conn.execute(
+            "ALTER TABLE learning_message_state_v2 "
+            "RENAME TO learning_message_state"
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX one_open_review_batch
+            ON review_batches(operator_id, source_harness, source_session_id)
+            WHERE status = 'open'
+            """
+        )
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise sqlite3.IntegrityError(
+                "learning schema migration left foreign-key violations"
+            )
+        conn.execute(
+            "INSERT INTO learning_schema(version, applied_at) VALUES (?, ?)",
+            (SCHEMA_VERSION, time.time()),
+        )
+        conn.commit()
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys=ON")
+
+
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS learning_schema (
+            version INTEGER PRIMARY KEY,
+            applied_at REAL NOT NULL
+        )
+        """
+    )
+    version_row = conn.execute(
+        "SELECT MAX(version) FROM learning_schema"
+    ).fetchone()
+    version = int(version_row[0]) if version_row and version_row[0] else None
+    has_batches = conn.execute(
+        """
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'review_batches'
+        """
+    ).fetchone()
+    if has_batches and version is None:
+        columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(review_batches)")
+        }
+        version = 2 if "surface_count" in columns else 1
+    if has_batches and version == 1:
+        _migrate_v1_to_v2(conn)
+    elif version not in (None, SCHEMA_VERSION):
+        raise sqlite3.DatabaseError(
+            "unsupported learning schema version %s" % version
+        )
+
+    _create_schema_v2(conn)
     conn.execute(
         "INSERT OR IGNORE INTO learning_schema(version, applied_at) VALUES (?, ?)",
         (SCHEMA_VERSION, time.time()),

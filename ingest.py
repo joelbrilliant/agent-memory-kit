@@ -12,6 +12,8 @@ import time
 import fnmatch
 import sqlite3
 
+from db_permissions import enforce_private_database, prepare_private_database
+
 # Paths derived from THIS script's location, not cwd.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CORPUS_PATH = os.path.join(SCRIPT_DIR, "corpus.txt")
@@ -126,6 +128,7 @@ def main():
     # Drop and recreate the index.
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
+    prepare_private_database(DB_PATH)
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "CREATE VIRTUAL TABLE docs USING fts5("
@@ -195,7 +198,9 @@ def main():
             total_indexed += 1
 
     conn.commit()
+    enforce_private_database(DB_PATH)
     conn.close()
+    enforce_private_database(DB_PATH)
 
     elapsed = time.time() - start
     try:

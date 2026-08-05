@@ -19,6 +19,7 @@ def build_parser():
     tick.add_argument("--agent-id", required=True)
     tick.add_argument("--no-sync", action="store_true")
     tick.add_argument("--max-user-turns", type=int, default=8)
+    tick.add_argument("--min-user-turns", type=int)
     tick.add_argument("--max-chars", type=int, default=6000)
 
     submit = subparsers.add_parser("submit")
@@ -35,6 +36,11 @@ def build_parser():
     context.add_argument("--scope-key")
     context.add_argument("--max-chars", type=int, default=1200)
     context.add_argument("--exclude-provisional", action="store_true")
+    context.add_argument("--task-match-only", action="store_true")
+
+    forget = subparsers.add_parser("forget")
+    forget.add_argument("--operator-id", default="default")
+    forget.add_argument("--claim-id", required=True)
     return parser
 
 
@@ -50,6 +56,7 @@ def main(argv=None):
                 "agent_id": args.agent_id,
                 "sync": not args.no_sync,
                 "max_user_turns": args.max_user_turns,
+                "min_user_turns": args.min_user_turns,
                 "max_chars": args.max_chars,
             },
         )
@@ -73,7 +80,7 @@ def main(argv=None):
                     "proposals": proposals,
                 },
             )
-    else:
+    elif args.command == "context":
         result = run_learning_tool(
             "context_packet",
             {
@@ -85,6 +92,15 @@ def main(argv=None):
                 "scope_key": args.scope_key,
                 "max_chars": args.max_chars,
                 "include_provisional": not args.exclude_provisional,
+                "task_match_only": args.task_match_only,
+            },
+        )
+    else:
+        result = run_learning_tool(
+            "learn_forget",
+            {
+                "operator_id": args.operator_id,
+                "claim_id": args.claim_id,
             },
         )
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))

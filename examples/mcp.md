@@ -7,7 +7,7 @@ message per line. Existing recall tools keep their CLI implementation through
 subprocess, while MCP and CLI learning calls share the public functions in
 `learning_loop.py`.
 
-It registers itself under the server name `agent-memory` and offers seven
+It registers itself under the server name `agent-memory` and offers eight
 tools:
 
 - `recall` - inputs: `query` (required), `k` (optional), `source` (optional
@@ -24,6 +24,8 @@ tools:
   `proposals` (required).
 - `context_packet` - inputs: `requesting_harness`, `requesting_agent_id` and
   `task` (required), plus optional scope and character-budget fields.
+- `learn_forget` - inputs: `operator_id` and `claim_id` (required). Deletes one
+  learned claim and its cited evidence without rewriting source transcripts.
 
 The server derives the paths to the `recall` and `remember` scripts from its own
 location. Override the index or root with `AGENT_MEMORY_DB` and
@@ -50,7 +52,7 @@ claude mcp add agent-memory -- python3 /path/to/agent-memory-kit/mcp_server.py
 ```
 
 Replace `/path/to/agent-memory-kit` with the absolute path to your clone. After
-adding it, the seven tools show up in the session. Verify with `claude mcp list`.
+adding it, the eight tools show up in the session. Verify with `claude mcp list`.
 
 ## Quick manual smoke test
 
@@ -66,4 +68,4 @@ printf '%s\n%s\n' \
 
 You should get an `initialize` result followed by a `tools/list` result naming
 `recall`, `remember`, `session_recall`, `session_list`, `learn_tick`,
-`learn_submit` and `context_packet`.
+`learn_submit`, `context_packet` and `learn_forget`.

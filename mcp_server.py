@@ -128,6 +128,7 @@ TOOLS = [
                 "agent_id": {"type": "string"},
                 "sync": {"type": "boolean", "default": True},
                 "max_user_turns": {"type": "integer", "default": 8},
+                "min_user_turns": {"type": "integer"},
                 "max_chars": {"type": "integer", "default": 6000},
             },
             "required": ["current_harness", "current_session_id", "agent_id"],
@@ -218,8 +219,24 @@ TOOLS = [
                 "scope_key": {"type": "string"},
                 "max_chars": {"type": "integer", "default": 1200},
                 "include_provisional": {"type": "boolean", "default": True},
+                "task_match_only": {"type": "boolean", "default": False},
             },
             "required": ["requesting_harness", "requesting_agent_id", "task"],
+        },
+    },
+    {
+        "name": "learn_forget",
+        "description": (
+            "Hard-delete one learned claim and its evidence for the named "
+            "operator. The receipt contains identifiers and outcome only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "operator_id": {"type": "string", "default": "default"},
+                "claim_id": {"type": "string"},
+            },
+            "required": ["claim_id"],
         },
     },
     {
@@ -269,7 +286,7 @@ def run_cli(cmd):
 
 
 def call_tool(name, args):
-    if name in {"learn_tick", "learn_submit", "context_packet"}:
+    if name in {"learn_tick", "learn_submit", "context_packet", "learn_forget"}:
         result = run_learning_tool(name, args)
         rendered = json.dumps(result, sort_keys=True, separators=(",", ":"))
         return rendered, not result.get("ok")

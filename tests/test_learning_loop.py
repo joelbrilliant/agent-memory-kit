@@ -8,10 +8,13 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from _learning_store import learning_db_path
+from _learning_store import SCHEMA_VERSION, connect_learning, learning_db_path
 from learning_loop import (
     LearningError,
+    claim_review_surface,
     context_packet,
+    fail_review_batch,
+    learn_forget,
     learn_submit,
     learn_tick,
     session_db_path,
@@ -25,6 +28,7 @@ class LearningLoopTest(unittest.TestCase):
         self.root = Path(self.tempdir.name)
         self.sessions_db = self.root / "sessions.db"
         self.learning_db = self.root / "learning.db"
+        self.usage_log = self.root / "usage.log"
         conn = connect(self.sessions_db)
         conn.execute(
             """
@@ -66,6 +70,7 @@ class LearningLoopTest(unittest.TestCase):
             {
                 "AGENT_SESSION_DB": str(self.sessions_db),
                 "AGENT_LEARNING_DB": str(self.learning_db),
+                "AGENT_MEMORY_USAGE_LOG": str(self.usage_log),
             },
         )
         self.environment.start()
@@ -159,6 +164,44 @@ class LearningLoopTest(unittest.TestCase):
         self.assertEqual(result["batch"]["source_session_id"], "codex-preference")
         self.assertEqual(result["items"][0]["message_key"], "message-1")
         self.assertEqual(len(result["items"][0]["message_content_hash"]), 64)
+
+    def test_learn_tick_waits_for_minimum_unseen_user_turns(self):
+        for index in range(2, 8):
+            self._append_message(
+                "user-%d" % index,
+                "user",
+                "Preference turn %d" % index,
+                float(index),
+            )
+
+        below_minimum = self._tick(min_user_turns=8)
+
+        self.assertIsNone(below_minimum["batch"])
+        self.assertEqual(
+            self._db_rows("SELECT COUNT(*) FROM review_batches")[0][0],
+            0,
+        )
+        self.assertEqual(
+            self._db_rows("SELECT COUNT(*) FROM learning_message_state")[0][0],
+            0,
+        )
+
+        self._append_message(
+            "user-8",
+            "user",
+            "Preference turn 8",
+            8.0,
+        )
+        at_minimum = self._tick(min_user_turns=8)
+        repeated = self._tick(min_user_turns=8, agent_id="agent-b")
+
+        self.assertIsNotNone(at_minimum["batch"])
+        self.assertEqual(at_minimum["batch"]["id"], repeated["batch"]["id"])
+
+    def test_learn_tick_without_minimum_keeps_existing_behaviour(self):
+        result = self._tick()
+
+        self.assertIsNotNone(result["batch"])
 
     def test_learn_tick_excludes_generated_tool_system_and_secret_rows(self):
         self._append_message("tool-1", "tool", "tool output", 2.0)
@@ -286,6 +329,317 @@ class LearningLoopTest(unittest.TestCase):
             "reviewed",
         )
         self.assertIsNone(self._tick()["batch"])
+
+    def test_surface_retry_exhaustion_is_terminal_and_allows_a_later_batch(self):
+        tick = self._tick()
+        batch_id = tick["batch"]["id"]
+
+        first = claim_review_surface(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            now=1_000.0,
+        )
+        cooldown = claim_review_surface(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            now=1_100.0,
+        )
+        second = claim_review_surface(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            now=1_300.0,
+        )
+        terminal = claim_review_surface(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            now=1_600.0,
+        )
+
+        self.assertEqual(first["action"], "surface")
+        self.assertEqual(cooldown["action"], "cooldown")
+        self.assertEqual(second["action"], "surface")
+        self.assertEqual(terminal["status"], "delivery_failed")
+        self.assertEqual(
+            self._db_rows(
+                """
+                SELECT status, surface_count, terminal_reason
+                FROM review_batches WHERE id = ?
+                """,
+                (batch_id,),
+            )[0],
+            ("delivery_failed", 2, "surface_attempts_exhausted"),
+        )
+        self.assertEqual(
+            self._db_rows(
+                "SELECT disposition FROM learning_message_state"
+            )[0][0],
+            "delivery_failed",
+        )
+
+        for index in range(2, 10):
+            self._append_message(
+                "fresh-%d" % index,
+                "user",
+                "Fresh preference turn %d" % index,
+                2_000.0 + index,
+            )
+        later = self._tick(min_user_turns=8)
+        self.assertNotEqual(later["batch"]["id"], batch_id)
+
+    def test_surface_claim_is_atomic_across_concurrent_hooks(self):
+        tick = self._tick()
+        batch_id = tick["batch"]["id"]
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def claim():
+            try:
+                barrier.wait(timeout=5)
+                results.append(
+                    claim_review_surface(
+                        batch_id=batch_id,
+                        agent_id="agent-a",
+                        now=1_000.0,
+                    )
+                )
+            except Exception as error:
+                errors.append(error)
+
+        workers = [threading.Thread(target=claim) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+        self.assertEqual(errors, [])
+        self.assertEqual(
+            sorted(result["action"] for result in results),
+            ["cooldown", "surface"],
+        )
+        self.assertEqual(
+            self._db_rows(
+                "SELECT surface_count FROM review_batches WHERE id = ?",
+                (batch_id,),
+            )[0][0],
+            1,
+        )
+
+    def test_unrenderable_terminal_is_not_counted_as_completed(self):
+        tick = self._tick()
+        batch_id = tick["batch"]["id"]
+
+        result = fail_review_batch(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            status="skipped_unrenderable",
+            reason="review_context_exceeds_limit",
+            now=2_000.0,
+        )
+
+        self.assertEqual(result["status"], "skipped_unrenderable")
+        self.assertEqual(
+            self._db_rows(
+                """
+                SELECT status, completed_at, terminal_reason
+                FROM review_batches WHERE id = ?
+                """,
+                (batch_id,),
+            )[0],
+            ("skipped_unrenderable", None, "review_context_exceeds_limit"),
+        )
+        self.assertEqual(
+            self._db_rows(
+                "SELECT disposition FROM learning_message_state"
+            )[0][0],
+            "skipped_unrenderable",
+        )
+
+    def test_successful_submit_after_surface_completes_exactly_once(self):
+        tick = self._tick()
+        batch_id = tick["batch"]["id"]
+        claim_review_surface(
+            batch_id=batch_id,
+            agent_id="agent-a",
+            now=1_000.0,
+        )
+
+        result = self._submit(tick, [])
+        with self.assertRaisesRegex(LearningError, "already completed"):
+            self._submit(tick, [])
+
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(
+            self._db_rows(
+                """
+                SELECT status, surface_count, completed_at, terminal_at
+                FROM review_batches WHERE id = ?
+                """,
+                (batch_id,),
+            )[0][:2],
+            ("completed", 1),
+        )
+        self.assertEqual(
+            self._db_rows(
+                "SELECT disposition FROM learning_message_state"
+            )[0][0],
+            "reviewed",
+        )
+
+    def test_v1_schema_migrates_all_learning_state_without_fk_damage(self):
+        connection = sqlite3.connect(self.learning_db)
+        connection.executescript(
+            """
+            CREATE TABLE learning_schema (
+                version INTEGER PRIMARY KEY,
+                applied_at REAL NOT NULL
+            );
+            INSERT INTO learning_schema VALUES (1, 1.0);
+            CREATE TABLE review_batches (
+                id TEXT PRIMARY KEY,
+                operator_id TEXT NOT NULL,
+                source_harness TEXT NOT NULL,
+                source_session_id TEXT NOT NULL,
+                reviewing_agent_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('open', 'completed')),
+                created_at REAL NOT NULL,
+                completed_at REAL
+            );
+            CREATE UNIQUE INDEX one_open_review_batch
+            ON review_batches(operator_id, source_harness, source_session_id)
+            WHERE status = 'open';
+            CREATE TABLE review_batch_items (
+                batch_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                message_content_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                timestamp REAL NOT NULL,
+                order_index INTEGER NOT NULL,
+                PRIMARY KEY (batch_id, order_index),
+                UNIQUE (batch_id, harness, session_id, message_key,
+                        message_content_hash),
+                FOREIGN KEY (batch_id) REFERENCES review_batches(id)
+                    ON DELETE CASCADE
+            );
+            CREATE TABLE learning_message_state (
+                operator_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                message_content_hash TEXT NOT NULL,
+                batch_id TEXT NOT NULL,
+                disposition TEXT NOT NULL CHECK (
+                    disposition IN ('reviewed', 'baseline_skipped')
+                ),
+                recorded_at REAL NOT NULL,
+                PRIMARY KEY (operator_id, harness, session_id, message_key,
+                             message_content_hash),
+                FOREIGN KEY (batch_id) REFERENCES review_batches(id)
+            );
+            CREATE TABLE learning_claims (
+                id TEXT PRIMARY KEY,
+                operator_id TEXT NOT NULL,
+                kind TEXT NOT NULL CHECK (kind = 'preference'),
+                statement TEXT NOT NULL,
+                scope TEXT NOT NULL CHECK (
+                    scope IN ('global', 'communication', 'work_style', 'domain')
+                ),
+                scope_key TEXT,
+                status TEXT NOT NULL CHECK (
+                    status IN ('provisional', 'confirmed', 'rejected', 'superseded')
+                ),
+                confidence TEXT NOT NULL CHECK (
+                    confidence IN ('explicit', 'inferred')
+                ),
+                created_by_agent_id TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                first_observed_at REAL NOT NULL,
+                last_observed_at REAL NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL,
+                UNIQUE (operator_id, content_hash)
+            );
+            CREATE TABLE claim_evidence (
+                id INTEGER PRIMARY KEY,
+                claim_id TEXT NOT NULL,
+                harness TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                message_key TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role = 'user'),
+                quote TEXT NOT NULL CHECK (length(quote) <= 500),
+                message_content_hash TEXT NOT NULL,
+                timestamp REAL NOT NULL,
+                FOREIGN KEY (claim_id) REFERENCES learning_claims(id)
+                    ON DELETE CASCADE
+            );
+            INSERT INTO review_batches VALUES (
+                'batch-v1', 'default', 'codex', 'codex-preference',
+                'agent-a', 'completed', 1.0, 2.0
+            );
+            INSERT INTO review_batch_items VALUES (
+                'batch-v1', 'codex', 'codex-preference', 'message-1',
+                'message-hash', 'user', 1.0, 0
+            );
+            INSERT INTO learning_message_state VALUES (
+                'default', 'codex', 'codex-preference', 'message-1',
+                'message-hash', 'batch-v1', 'reviewed', 2.0
+            );
+            INSERT INTO learning_claims VALUES (
+                'claim-v1', 'default', 'preference', 'Keep replies short.',
+                'communication', NULL, 'provisional', 'explicit', 'agent-a',
+                'claim-hash', 1.0, 1.0, 2.0, 2.0
+            );
+            INSERT INTO claim_evidence VALUES (
+                1, 'claim-v1', 'codex', 'codex-preference', 'message-1',
+                'user', 'Keep replies short.', 'message-hash', 1.0
+            );
+            """
+        )
+        connection.commit()
+        connection.close()
+
+        migrated, path = connect_learning()
+        try:
+            self.assertEqual(
+                migrated.execute(
+                    "SELECT MAX(version) FROM learning_schema"
+                ).fetchone()[0],
+                SCHEMA_VERSION,
+            )
+            self.assertEqual(
+                migrated.execute(
+                    "SELECT COUNT(*) FROM review_batch_items"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                migrated.execute(
+                    "SELECT COUNT(*) FROM learning_message_state"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                migrated.execute(
+                    "SELECT COUNT(*) FROM learning_claims"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                migrated.execute(
+                    "SELECT COUNT(*) FROM claim_evidence"
+                ).fetchone()[0],
+                1,
+            )
+            self.assertEqual(
+                migrated.execute("PRAGMA foreign_key_check").fetchall(),
+                [],
+            )
+        finally:
+            migrated.close()
+            self.assertEqual(path, self.learning_db)
 
     def test_empty_tick_does_not_create_a_batch(self):
         conn = sqlite3.connect(self.sessions_db)
@@ -425,6 +779,27 @@ class LearningLoopTest(unittest.TestCase):
         with self.assertRaisesRegex(LearningError, "exact normalised substring"):
             self._submit(tick, [self._proposal(quote="Forged preference")])
 
+    def test_submit_rejects_a_paraphrased_statement(self):
+        tick = self._tick()
+
+        with self.assertRaisesRegex(
+            LearningError,
+            "normalised operator evidence quote",
+        ):
+            self._submit(
+                tick,
+                [self._proposal(statement="Keep normal replies concise.")],
+            )
+
+        self.assertEqual(
+            self._db_rows("SELECT status FROM review_batches")[0][0],
+            "open",
+        )
+        self.assertEqual(
+            self._db_rows("SELECT COUNT(*) FROM learning_message_state")[0][0],
+            0,
+        )
+
     def test_submit_rejects_missing_source_evidence(self):
         tick = self._tick()
         conn = sqlite3.connect(self.sessions_db)
@@ -524,7 +899,7 @@ class LearningLoopTest(unittest.TestCase):
             0,
         )
 
-    def test_submit_rejects_inferred_confidence_in_slice1(self):
+    def test_submit_rejects_inferred_confidence(self):
         tick = self._tick()
 
         with self.assertRaisesRegex(LearningError, "only explicit"):
@@ -653,7 +1028,7 @@ class LearningLoopTest(unittest.TestCase):
         self._append_message(
             "message-2",
             "user",
-            "Please still use Celsius for weather reports.",
+            "Use Celsius for weather reports.",
             3.0,
         )
         second = self._tick()
@@ -662,7 +1037,7 @@ class LearningLoopTest(unittest.TestCase):
             [
                 self._proposal(
                     message_key="message-2",
-                    quote="Please still use Celsius for weather reports.",
+                    quote="Use Celsius for weather reports.",
                 )
             ],
         )
@@ -692,17 +1067,94 @@ class LearningLoopTest(unittest.TestCase):
         self.assertEqual(result["packet"], "")
         self.assertEqual(result["claims"], [])
 
+    def test_context_packet_task_match_only_excludes_unrelated_global_claims(self):
+        matching = self._submit()["claims"][0]
+        self._append_message(
+            "message-2",
+            "user",
+            "Use Australian English spelling.",
+            2.0,
+        )
+        global_claim = self._submit(
+            self._tick(),
+            [
+                self._proposal(
+                    statement="Use Australian English spelling.",
+                    scope="global",
+                    message_key="message-2",
+                    quote="Use Australian English spelling.",
+                )
+            ],
+        )["claims"][0]
+
+        result = context_packet(
+            requesting_harness="hermes",
+            requesting_agent_id="agent-b",
+            task="Weather reports in Celsius",
+            task_match_only=True,
+        )
+
+        self.assertEqual([claim["id"] for claim in result["claims"]], [matching["id"]])
+        self.assertNotIn(global_claim["id"], [claim["id"] for claim in result["claims"]])
+
+    def test_learn_forget_removes_claim_evidence_and_fts_without_content_receipt(self):
+        claim = self._submit()["claims"][0]
+        claim_id = claim["id"]
+
+        with self.assertRaisesRegex(LearningError, "operator"):
+            learn_forget(operator_id="other-operator", claim_id=claim_id)
+
+        receipt = learn_forget(operator_id="default", claim_id=claim_id)
+
+        self.assertEqual(
+            receipt,
+            {
+                "ok": True,
+                "operator_id": "default",
+                "claim_id": claim_id,
+                "outcome": "forgotten",
+            },
+        )
+        self.assertEqual(
+            self._db_rows("SELECT COUNT(*) FROM learning_claims")[0][0],
+            0,
+        )
+        self.assertEqual(
+            self._db_rows("SELECT COUNT(*) FROM claim_evidence")[0][0],
+            0,
+        )
+        self.assertEqual(
+            self._db_rows(
+                "SELECT COUNT(*) FROM learning_claims_fts WHERE learning_claims_fts MATCH ?",
+                ("paragraphs",),
+            )[0][0],
+            0,
+        )
+        self.assertNotIn(claim["statement"], str(receipt))
+        usage = self.usage_log.read_text(encoding="utf-8")
+        self.assertIn("learning://forget/%s" % claim_id, usage)
+        self.assertNotIn(claim["statement"], usage)
+
     def test_context_packet_includes_global_and_exact_scope_without_fts_overlap(self):
+        self._append_message(
+            "message-2",
+            "user",
+            "Use Australian English spelling.",
+            2.0,
+        )
         self._submit(
+            self._tick(max_user_turns=1),
             proposals=[
                 self._proposal(
-                    statement="Display dates in ISO 8601 format.",
+                    statement="Use Australian English spelling.",
                     scope="global",
+                    message_key="message-2",
+                    quote="Use Australian English spelling.",
                 )
             ]
         )
         self._append_message(
-            "message-2",
+            "message-3",
             "user",
             "Put measurement units after each weather value.",
             3.0,
@@ -712,7 +1164,8 @@ class LearningLoopTest(unittest.TestCase):
             tick,
             [
                 self._proposal(
-                    message_key="message-2",
+                    statement="Put measurement units after each weather value.",
+                    message_key="message-3",
                     quote="Put measurement units after each weather value.",
                 )
             ],
@@ -733,7 +1186,7 @@ class LearningLoopTest(unittest.TestCase):
         self._submit(
             proposals=[
                 self._proposal(
-                    statement="Include measurement units in every weather report.",
+                    statement="Use Celsius for weather reports.",
                     scope="global",
                 )
             ]

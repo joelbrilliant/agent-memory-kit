@@ -7,6 +7,7 @@ import os
 import sqlite3
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,25 @@ LearningError = policy.LearningError
 
 def session_db_path() -> Path:
     return Path(os.environ.get("AGENT_SESSION_DB", str(DEFAULT_SESSION_DB)))
+
+
+def usage_log_path() -> Path:
+    return Path(
+        os.environ.get("AGENT_MEMORY_USAGE_LOG", str(SCRIPT_DIR / "usage.log"))
+    )
+
+
+def _log_learning_operation(operation: str, claim_id: str) -> None:
+    try:
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        caller = os.environ.get("AGENT_MEMORY_CALLER", "-")
+        with usage_log_path().open("a", encoding="utf-8") as fh:
+            fh.write(
+                "%s\tlearning:%s\tlearning://%s/%s\t%s\n"
+                % (timestamp, operation, operation, claim_id, caller)
+            )
+    except OSError:
+        pass
 
 
 def _session_rows(
@@ -144,7 +164,11 @@ def _batch_result(
             "reviewing_agent_id": batch["reviewing_agent_id"],
             "status": batch["status"],
             "created_at": batch["created_at"],
+            "surfaced_at": batch["surfaced_at"],
+            "surface_count": batch["surface_count"],
             "completed_at": batch["completed_at"],
+            "terminal_at": batch["terminal_at"],
+            "terminal_reason": batch["terminal_reason"],
         },
         "items": rendered_items,
         "submit_schema": {
@@ -154,6 +178,216 @@ def _batch_result(
             "evidence": ["harness", "session_id", "message_key", "quote"],
         },
     }
+
+
+REVIEW_MAX_SURFACE_ATTEMPTS = 2
+REVIEW_RETRY_COOLDOWN_SECONDS = 300.0
+REVIEW_TERMINAL_STATUSES = {
+    "skipped_unrenderable",
+    "delivery_failed",
+}
+
+
+def _terminalize_review_batch(
+    conn: sqlite3.Connection,
+    batch: sqlite3.Row,
+    status: str,
+    reason: str,
+    now: float,
+) -> int:
+    items = _batch_items(conn, batch["id"])
+    for item in items:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO learning_message_state(
+                operator_id, harness, session_id, message_key,
+                message_content_hash, batch_id, disposition, recorded_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                batch["operator_id"],
+                item["harness"],
+                item["session_id"],
+                item["message_key"],
+                item["message_content_hash"],
+                batch["id"],
+                status,
+                now,
+            ),
+        )
+    conn.execute(
+        """
+        UPDATE review_batches
+        SET status = ?, terminal_at = ?, terminal_reason = ?
+        WHERE id = ? AND status = 'open'
+        """,
+        (status, now, reason, batch["id"]),
+    )
+    return len(items)
+
+
+def claim_review_surface(
+    *,
+    batch_id: str,
+    agent_id: str,
+    now: float | None = None,
+) -> dict[str, Any]:
+    batch_id = policy.required_text("batch_id", batch_id)
+    agent_id = policy.required_text("agent_id", agent_id)
+    claimed_at = time.time() if now is None else float(now)
+    conn, path = connect_learning()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        batch = conn.execute(
+            "SELECT * FROM review_batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+        if not batch:
+            raise LearningError("batch_not_found", "review batch does not exist")
+        if batch["reviewing_agent_id"] != agent_id:
+            raise LearningError(
+                "wrong_reviewing_agent",
+                "agent_id does not own this review batch",
+            )
+        if batch["status"] != "open":
+            conn.rollback()
+            return {
+                "ok": True,
+                "action": "closed",
+                "batch_id": batch_id,
+                "status": batch["status"],
+            }
+
+        surface_count = int(batch["surface_count"])
+        surfaced_at = batch["surfaced_at"]
+        if surfaced_at is not None:
+            elapsed = claimed_at - float(surfaced_at)
+            if elapsed < REVIEW_RETRY_COOLDOWN_SECONDS:
+                conn.rollback()
+                return {
+                    "ok": True,
+                    "action": "cooldown",
+                    "batch_id": batch_id,
+                    "status": "open",
+                    "surface_count": surface_count,
+                    "retry_after": REVIEW_RETRY_COOLDOWN_SECONDS - elapsed,
+                }
+
+        if surface_count >= REVIEW_MAX_SURFACE_ATTEMPTS:
+            reviewed_messages = _terminalize_review_batch(
+                conn,
+                batch,
+                "delivery_failed",
+                "surface_attempts_exhausted",
+                claimed_at,
+            )
+            conn.commit()
+            enforce_permissions(path)
+            return {
+                "ok": True,
+                "action": "terminal",
+                "batch_id": batch_id,
+                "status": "delivery_failed",
+                "surface_count": surface_count,
+                "failed_messages": reviewed_messages,
+            }
+
+        updated = conn.execute(
+            """
+            UPDATE review_batches
+            SET surfaced_at = ?, surface_count = surface_count + 1
+            WHERE id = ? AND status = 'open' AND surface_count = ?
+            """,
+            (claimed_at, batch_id, surface_count),
+        )
+        if updated.rowcount != 1:
+            conn.rollback()
+            return {
+                "ok": True,
+                "action": "contended",
+                "batch_id": batch_id,
+                "status": "open",
+            }
+        conn.commit()
+        enforce_permissions(path)
+        return {
+            "ok": True,
+            "action": "surface",
+            "batch_id": batch_id,
+            "status": "open",
+            "surface_count": surface_count + 1,
+            "surfaced_at": claimed_at,
+        }
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        enforce_permissions(path)
+        conn.close()
+
+
+def fail_review_batch(
+    *,
+    batch_id: str,
+    agent_id: str,
+    status: str,
+    reason: str,
+    now: float | None = None,
+) -> dict[str, Any]:
+    batch_id = policy.required_text("batch_id", batch_id)
+    agent_id = policy.required_text("agent_id", agent_id)
+    reason = policy.required_text("reason", reason)
+    if status not in REVIEW_TERMINAL_STATUSES:
+        raise LearningError(
+            "invalid_terminal_status",
+            "review terminal status is not allowed",
+        )
+    terminal_at = time.time() if now is None else float(now)
+    conn, path = connect_learning()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        batch = conn.execute(
+            "SELECT * FROM review_batches WHERE id = ?",
+            (batch_id,),
+        ).fetchone()
+        if not batch:
+            raise LearningError("batch_not_found", "review batch does not exist")
+        if batch["reviewing_agent_id"] != agent_id:
+            raise LearningError(
+                "wrong_reviewing_agent",
+                "agent_id does not own this review batch",
+            )
+        if batch["status"] != "open":
+            conn.rollback()
+            return {
+                "ok": True,
+                "batch_id": batch_id,
+                "status": batch["status"],
+                "failed_messages": 0,
+            }
+        failed_messages = _terminalize_review_batch(
+            conn,
+            batch,
+            status,
+            reason,
+            terminal_at,
+        )
+        conn.commit()
+        enforce_permissions(path)
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "status": status,
+            "failed_messages": failed_messages,
+        }
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    finally:
+        enforce_permissions(path)
+        conn.close()
 
 
 def _selected_rows(
@@ -209,6 +443,7 @@ def learn_tick(
     operator_id: str = "default",
     sync: bool = True,
     max_user_turns: int = 8,
+    min_user_turns: int | None = None,
     max_chars: int = 6_000,
 ) -> dict[str, Any]:
     operator_id = policy.required_text("operator_id", operator_id)
@@ -224,6 +459,13 @@ def learn_tick(
         policy.MAX_USER_TURNS,
         "max_user_turns",
     )
+    if min_user_turns is not None:
+        min_user_turns = policy.bounded_positive(
+            min_user_turns,
+            1,
+            policy.MAX_USER_TURNS,
+            "min_user_turns",
+        )
     max_chars = policy.bounded_positive(
         max_chars,
         6_000,
@@ -280,6 +522,22 @@ def learn_tick(
             (operator_id, current_harness, current_session_id),
         ).fetchall()
         known = {(row[0], row[1]) for row in state_rows}
+        if min_user_turns is not None:
+            unseen_user_turns = sum(
+                1
+                for row in rows
+                if row["role"] == "user"
+                and (row["message_key"], row["message_content_hash"])
+                not in known
+            )
+            if unseen_user_turns < min_user_turns:
+                learning_conn.rollback()
+                return {
+                    "ok": True,
+                    "batch": None,
+                    "items": [],
+                    "submit_schema": None,
+                }
         first_review = not state_rows
         selected = _selected_rows(
             rows,
@@ -576,6 +834,7 @@ def context_packet(
     scope_key: str | None = None,
     max_chars: int = 1_200,
     include_provisional: bool = True,
+    task_match_only: bool = False,
 ) -> dict[str, Any]:
     operator_id = policy.required_text("operator_id", operator_id)
     requesting_harness = policy.required_text(
@@ -598,6 +857,11 @@ def context_packet(
         raise LearningError(
             "invalid_input",
             "include_provisional must be a boolean",
+        )
+    if not isinstance(task_match_only, bool):
+        raise LearningError(
+            "invalid_input",
+            "task_match_only must be a boolean",
         )
 
     conn, path = connect_learning()
@@ -643,7 +907,11 @@ def context_packet(
                     scope != "domain" or row["scope_key"] == scope_key
                 )
             is_global = row["scope"] == "global"
-            if not (exact_scope or is_global or claim_id in fts_scores):
+            if task_match_only and claim_id not in fts_scores:
+                continue
+            if not task_match_only and not (
+                exact_scope or is_global or claim_id in fts_scores
+            ):
                 continue
             evidence = conn.execute(
                 """
@@ -722,9 +990,49 @@ def context_packet(
                 "scope": scope,
                 "scope_key": scope_key,
                 "include_provisional": include_provisional,
+                "task_match_only": task_match_only,
                 "max_chars": budget,
             },
         }
+    finally:
+        enforce_permissions(path)
+        conn.close()
+
+
+def learn_forget(
+    *,
+    operator_id: str = "default",
+    claim_id: str,
+) -> dict[str, Any]:
+    operator_id = policy.required_text("operator_id", operator_id)
+    claim_id = policy.required_text("claim_id", claim_id)
+    conn, path = connect_learning()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        owner = conn.execute(
+            "SELECT operator_id FROM learning_claims WHERE id = ?",
+            (claim_id,),
+        ).fetchone()
+        if not owner:
+            raise LearningError("claim_not_found", "claim does not exist")
+        if owner["operator_id"] != operator_id:
+            raise LearningError(
+                "cross_operator_forget",
+                "claim belongs to a different operator",
+            )
+        conn.execute("DELETE FROM learning_claims WHERE id = ?", (claim_id,))
+        conn.commit()
+        _log_learning_operation("forget", claim_id)
+        return {
+            "ok": True,
+            "operator_id": operator_id,
+            "claim_id": claim_id,
+            "outcome": "forgotten",
+        }
+    except Exception:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
     finally:
         enforce_permissions(path)
         conn.close()
@@ -745,6 +1053,8 @@ def run_learning_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
             return learn_submit(**arguments)
         if name == "context_packet":
             return context_packet(**arguments)
+        if name == "learn_forget":
+            return learn_forget(**arguments)
         raise LearningError("unknown_tool", "unknown learning tool: %s" % name)
     except LearningError as error:
         return error.as_result()

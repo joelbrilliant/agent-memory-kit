@@ -40,7 +40,8 @@ machine. The agent should adapt to the harnesses that are actually installed.
 > - a check that all derived databases and logs are ignored by Git
 >
 > Report observed evidence, exact files changed, and any harness that could not
-> be wired. Do not claim success from configuration alone.
+> be wired. Do not claim success from configuration alone. Leave experimental
+> preference learning off unless I separately approve it.
 
 ## What the operator should expect
 

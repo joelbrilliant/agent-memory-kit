@@ -2,6 +2,7 @@ import ast
 import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -88,6 +89,7 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                 "HOME": str(self.home),
                 "AGENT_SESSION_DB": str(self.sessions_db),
                 "AGENT_LEARNING_DB": str(self.learning_db),
+                "AGENT_MEMORY_USAGE_LOG": str(self.root / "usage.log"),
                 "HERMES_SESSION_DB": str(self.root / "missing-hermes.db"),
                 "CLAUDE_PROJECTS_ROOT": str(self.root / "claude-sessions"),
                 "CODEX_SESSIONS_ROOT": str(self.codex_root),
@@ -214,7 +216,12 @@ class LearningLoopIntegrationTest(unittest.TestCase):
             listed = json.loads(process.stdout.readline())
             tool_names = {tool["name"] for tool in listed["result"]["tools"]}
             self.assertTrue(
-                {"learn_tick", "learn_submit", "context_packet"}.issubset(tool_names)
+                {
+                    "learn_tick",
+                    "learn_submit",
+                    "context_packet",
+                    "learn_forget",
+                }.issubset(tool_names)
             )
             tick, tick_error = self._mcp_request(
                 process,
@@ -255,6 +262,18 @@ class LearningLoopIntegrationTest(unittest.TestCase):
             self.assertFalse(context_error)
             self.assertEqual(submitted["status"], "completed")
             self.assertIn("user-pref-1", packet["packet"])
+            forgotten, forget_error = self._mcp_request(
+                process,
+                4,
+                "learn_forget",
+                {
+                    "operator_id": "synthetic-operator",
+                    "claim_id": submitted["claims"][0]["id"],
+                },
+            )
+            self.assertFalse(forget_error)
+            self.assertEqual(forgotten["outcome"], "forgotten")
+            self.assertNotIn("one or two short paragraphs", str(forgotten))
         finally:
             process.stdin.close()
             process.wait(timeout=5)
@@ -274,6 +293,8 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                 "codex-learning-session",
                 "--agent-id",
                 "synthetic-codex-agent",
+                "--min-user-turns",
+                "1",
             ],
             cwd=REPO,
             env=os.environ.copy(),
@@ -294,6 +315,7 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                     "current_session_id": "codex-learning-session",
                     "agent_id": "synthetic-codex-agent",
                     "sync": True,
+                    "min_user_turns": 1,
                 },
             },
         }
@@ -398,6 +420,7 @@ class LearningLoopIntegrationTest(unittest.TestCase):
                 context_arguments["task"],
                 "--scope",
                 context_arguments["scope"],
+                "--task-match-only",
             ],
             cwd=REPO,
             env=os.environ.copy(),
@@ -411,7 +434,7 @@ class LearningLoopIntegrationTest(unittest.TestCase):
             "method": "tools/call",
             "params": {
                 "name": "context_packet",
-                "arguments": context_arguments,
+                "arguments": {**context_arguments, "task_match_only": True},
             },
         }
         mcp_context_process = subprocess.run(
@@ -430,6 +453,62 @@ class LearningLoopIntegrationTest(unittest.TestCase):
         self.assertFalse(context_response["result"]["isError"])
         self.assertEqual(json.loads(cli_context.stdout), mcp_context)
         self.assertIn("user-pref-1", mcp_context["packet"])
+
+        claim_id = mcp_context["claims"][0]["id"]
+        mcp_learning_db = self.root / "mcp-forget.db"
+        source = sqlite3.connect(self.learning_db)
+        target = sqlite3.connect(mcp_learning_db)
+        try:
+            source.backup(target)
+        finally:
+            target.close()
+            source.close()
+
+        cli_forget = subprocess.run(
+            [
+                str(REPO / "learning-memory"),
+                "forget",
+                "--operator-id",
+                "synthetic-operator",
+                "--claim-id",
+                claim_id,
+            ],
+            cwd=REPO,
+            env=os.environ.copy(),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        forget_request = {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "learn_forget",
+                "arguments": {
+                    "operator_id": "synthetic-operator",
+                    "claim_id": claim_id,
+                },
+            },
+        }
+        mcp_environment = os.environ.copy()
+        mcp_environment["AGENT_LEARNING_DB"] = str(mcp_learning_db)
+        mcp_forget = subprocess.run(
+            [sys.executable, str(REPO / "mcp_server.py")],
+            input=json.dumps(forget_request) + "\n",
+            cwd=REPO,
+            env=mcp_environment,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        forget_response = json.loads(mcp_forget.stdout)
+        mcp_forget_result = json.loads(
+            forget_response["result"]["content"][0]["text"]
+        )
+        self.assertFalse(forget_response["result"]["isError"])
+        self.assertEqual(json.loads(cli_forget.stdout), mcp_forget_result)
 
     def test_public_example_uses_published_cli(self):
         result = subprocess.run(
