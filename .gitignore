@@ -1,4 +1,7 @@
 index.db
+sessions.db
+sessions.db-shm
+sessions.db-wal
 usage.log
 hook.log
 ingest.log

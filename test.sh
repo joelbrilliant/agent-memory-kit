@@ -11,7 +11,8 @@ pass() { echo "PASS: $1"; }
 fail() { echo "FAIL: $1"; FAILURES=$((FAILURES + 1)); }
 
 # Copy the tools into the temp dir so SCRIPT_DIR (and its corpus.txt) is the fixture.
-cp "$REPO_DIR/ingest.py" "$REPO_DIR/recall" "$REPO_DIR/remember" "$TMP/"
+cp "$REPO_DIR/ingest.py" "$REPO_DIR/db_permissions.py" \
+  "$REPO_DIR/recall" "$REPO_DIR/remember" "$TMP/"
 chmod +x "$TMP/recall" "$TMP/remember"
 
 # Fixture corpus and files.
@@ -51,6 +52,19 @@ if [ "${TOTAL_INDEXED:-0}" -ge 1 ]; then
   pass "a: ingest reports ${TOTAL_INDEXED} indexed (>=1)"
 else
   fail "a: ingest reported ${TOTAL_INDEXED:-0} indexed"
+fi
+
+DB_MODE="$(python3 - "$AGENT_MEMORY_DB" <<'PY'
+import os
+import sys
+
+print(oct(os.stat(sys.argv[1]).st_mode & 0o777))
+PY
+)"
+if [ "$DB_MODE" = "0o600" ]; then
+  pass "a2: index database is owner-only"
+else
+  fail "a2: index database mode was $DB_MODE, expected 0o600"
 fi
 
 # --- b. the secret fixture is skipped (secret-scan count 1, not recallable) ---
@@ -126,6 +140,14 @@ if NR_OUT="$(python3 "$TMP/recall" "nonexistent-term-zzz" -k 3)"; then
   fi
 else
   fail "f: recall of nonexistent term exited nonzero"
+fi
+
+# --- g. deterministic cross-harness session adapter and hook tests ---
+if PYTHONPATH="$REPO_DIR" python3 -m unittest discover \
+  -s "$REPO_DIR/tests" -p 'test_*.py'; then
+  pass "g: cross-harness continuity tests pass"
+else
+  fail "g: cross-harness continuity tests failed"
 fi
 
 echo "----------------------------------------"
