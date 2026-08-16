@@ -40,6 +40,22 @@ Add the [agent-instructions.md](agent-instructions.md) snippet to
 runs the CLIs via shell like anything else. Register `mcp_server.py` as a stdio
 MCP server when available so session recall is a first-class tool.
 
+## Grok
+
+Register `mcp_server.py` as a stdio MCP server and set
+`AGENT_MEMORY_CALLER=grok` for clear usage receipts. Add the standing rule from
+[agent-instructions.md](agent-instructions.md) to `AGENTS.md`, which Grok reads.
+
+Do not install the Claude prompt hook as Grok auto-recall. Grok runs passive
+`UserPromptSubmit` hooks, but ignores their stdout, so the returned context
+never reaches the model. The supported continuity path is:
+
+- Grok transcripts are indexed from `~/.grok/sessions`
+- `session_recall` is available through the `agent-memory` MCP server
+- the standing instruction tells Grok when to call it
+
+Verify all three. A configured MCP entry alone is not proof.
+
 ## Anything else with a shell
 
 The contract is four commands: `python3 ingest.py` (rebuild documents),

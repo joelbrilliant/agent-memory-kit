@@ -44,6 +44,23 @@ Replace `/path/to/agent-memory-kit` with the absolute path to your clone. After
 adding it, `recall` and `remember` show up as tools in the session. Verify with
 `claude mcp list`.
 
+## Concrete example: Grok
+
+```
+grok mcp add agent-memory -- python3 /path/to/agent-memory-kit/mcp_server.py
+```
+
+Set `AGENT_MEMORY_CALLER=grok` in the server environment when configuring by
+file. Verify the real process, not just the config entry:
+
+```
+grok mcp doctor agent-memory
+```
+
+Then ask a Grok session to call `session_recall` for distinctive terms from a
+conversation held in another harness. Grok prompt hooks cannot inject context
+because passive hook stdout is ignored.
+
 ## Quick manual smoke test
 
 You can drive the server by hand to confirm it responds before wiring it into a

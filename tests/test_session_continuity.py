@@ -14,6 +14,7 @@ from session_continuity import (
     recall_sessions,
     sync_index,
 )
+from session_adapters import clean_message_content
 
 
 class SessionContinuityTest(unittest.TestCase):
@@ -97,7 +98,9 @@ class SessionContinuityTest(unittest.TestCase):
                 (
                     "hermes-human",
                     "user",
-                    "hermescanary rollover threshold follows context pressure",
+                    "hermescanary rollover threshold follows context pressure\n\n"
+                    "[Your active task list was preserved across context compression]\n"
+                    "- [ ] generatedsuffixhermes (pending)",
                     1002.0,
                 ),
                 (
@@ -117,6 +120,18 @@ class SessionContinuityTest(unittest.TestCase):
                     "assistant",
                     "[CONTEXT COMPACTION - REFERENCE ONLY] generatednoisehermes",
                     1005.0,
+                ),
+                (
+                    "hermes-human",
+                    "user",
+                    "<user_info>generatedenvelopehermes</user_info>",
+                    1005.1,
+                ),
+                (
+                    "hermes-human",
+                    "assistant",
+                    "[IMPORTANT: Background process] backgroundnoisehermes",
+                    1005.2,
                 ),
                 (
                     "hermes-cron",
@@ -377,6 +392,9 @@ class SessionContinuityTest(unittest.TestCase):
         for forbidden in [
             "toolnoisehermes",
             "generatednoisehermes",
+            "generatedsuffixhermes",
+            "generatedenvelopehermes",
+            "backgroundnoisehermes",
             "cronnoisehermes",
             "reasoningnoiseclaude",
             "toolnoiseclaude",
@@ -491,6 +509,82 @@ class SessionContinuityTest(unittest.TestCase):
         )
         self.assertEqual(excluded, [])
 
+    def test_recall_collapses_identical_cross_session_evidence(self):
+        duplicate_path = self.codex_root / "duplicate.jsonl"
+        self._jsonl(
+            duplicate_path,
+            [
+                {
+                    "type": "session_meta",
+                    "timestamp": "2026-07-29T02:00:00Z",
+                    "payload": {
+                        "id": "codex-duplicate",
+                        "cwd": "/work/codex",
+                        "timestamp": "2026-07-29T02:00:00Z",
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-07-29T02:00:02Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": "codexcanary central session index",
+                            }
+                        ],
+                    },
+                },
+            ],
+        )
+        distinct_path = self.codex_root / "distinct.jsonl"
+        self._jsonl(
+            distinct_path,
+            [
+                {
+                    "type": "session_meta",
+                    "timestamp": "2026-07-30T02:00:00Z",
+                    "payload": {
+                        "id": "codex-distinct",
+                        "cwd": "/work/codex",
+                        "timestamp": "2026-07-30T02:00:00Z",
+                    },
+                },
+                {
+                    "type": "response_item",
+                    "timestamp": "2026-07-30T02:00:02Z",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_text",
+                                "text": (
+                                    "codexcanary central session index has "
+                                    "independent evidence"
+                                ),
+                            }
+                        ],
+                    },
+                },
+            ],
+        )
+
+        sync_index(self.session_db, self.roots)
+        hits = recall_sessions(
+            self.session_db,
+            "codexcanary central session index",
+            limit=5,
+            sync=False,
+        )
+
+        self.assertEqual(len(hits), 2)
+        duplicate_ids = {"codex-one", "codex-duplicate"}
+        self.assertEqual(len(duplicate_ids & {hit.session_id for hit in hits}), 1)
+        self.assertIn("codex-distinct", {hit.session_id for hit in hits})
+
     def test_recall_reads_existing_index_when_refresh_is_not_writable(self):
         sync_index(self.session_db, self.roots)
         with patch(
@@ -509,7 +603,7 @@ class SessionContinuityTest(unittest.TestCase):
         self.assertTrue(hits)
         self.assertEqual(hits[0].session_id, "claude-one")
 
-    def _run_hook(self, payload, harness):
+    def _run_hook(self, payload, harness, extra_env=None):
         sync_index(self.session_db, self.roots)
         env = os.environ.copy()
         env.update(
@@ -517,12 +611,15 @@ class SessionContinuityTest(unittest.TestCase):
                 "AGENT_MEMORY_DB": str(self.root / "missing-docs.db"),
                 "AGENT_SESSION_DB": str(self.session_db),
                 "AGENT_MEMORY_HARNESS": harness,
+                "AGENT_MEMORY_HOOK_LOG": str(self.root / "hook.log"),
                 "HERMES_SESSION_DB": str(self.hermes_db),
                 "CLAUDE_PROJECTS_ROOT": str(self.claude_root),
                 "CODEX_SESSIONS_ROOT": str(self.codex_root),
                 "GROK_SESSIONS_ROOT": str(self.grok_root),
             }
         )
+        if extra_env:
+            env.update(extra_env)
         hook = (
             Path(__file__).resolve().parents[1]
             / "hooks"
@@ -547,6 +644,7 @@ class SessionContinuityTest(unittest.TestCase):
                 "CLAUDE_PROJECTS_ROOT": str(self.claude_root),
                 "CODEX_SESSIONS_ROOT": str(self.codex_root),
                 "GROK_SESSIONS_ROOT": str(self.grok_root),
+                "AGENT_MEMORY_CALLER": "grok",
             }
         )
         server = Path(__file__).resolve().parents[1] / "mcp_server.py"
@@ -612,6 +710,99 @@ class SessionContinuityTest(unittest.TestCase):
         self.assertIn("[grok]", hermes_payload["context"])
         self.assertIn("grok-one", hermes_payload["context"])
 
+    def test_hook_skips_generated_harness_prompts(self):
+        prompts = [
+            "Review the conversation above and update the skill library. Be active.",
+            "Review the conversation above and consider saving to memory if appropriate.",
+            "Review the conversation above and update two things: memory and skills.",
+        ]
+        for prompt in prompts:
+            with self.subTest(prompt=prompt):
+                output = self._run_hook(
+                    {
+                        "hook_event_name": "pre_llm_call",
+                        "session_id": "hermes-human",
+                        "extra": {"user_message": prompt},
+                    },
+                    "hermes",
+                )
+                self.assertEqual(output, "")
+
+    def test_hook_strips_generated_task_suffix_but_keeps_user_prompt(self):
+        genuine_prompt = (
+            "Please resume the grokcanary local deterministic retrieval work"
+        )
+        supplied_prompt = (
+            genuine_prompt
+            + "\n\n"
+            + "[Your active task list was preserved across context compression]\n"
+            + "- [ ] stale-task should not affect retrieval (pending)"
+        )
+        self.assertEqual(
+            clean_message_content("user", supplied_prompt),
+            genuine_prompt,
+        )
+
+        output = self._run_hook(
+            {
+                "hook_event_name": "pre_llm_call",
+                "session_id": "hermes-current",
+                "extra": {
+                    "user_message": supplied_prompt
+                },
+            },
+            "hermes",
+        )
+        context = json.loads(output)["context"]
+        self.assertIn("[grok]", context)
+        self.assertNotIn("stale-task", context)
+
+    def test_hook_does_not_automatically_inject_skills(self):
+        document_db = self.root / "documents.db"
+        conn = sqlite3.connect(document_db)
+        conn.execute(
+            "CREATE VIRTUAL TABLE docs USING fts5("
+            "content, path UNINDEXED, source UNINDEXED, mtime UNINDEXED, "
+            "tokenize='porter unicode61')"
+        )
+        conn.executemany(
+            "INSERT INTO docs(content, path, source, mtime) VALUES (?, ?, ?, ?)",
+            [
+                (
+                    "authorityzebra governance contract precedence",
+                    "/fixture/stale-skill.md",
+                    "skills",
+                    1.0,
+                ),
+                (
+                    "authorityzebra governance contract precedence",
+                    "/fixture/canonical-contract.md",
+                    "contracts",
+                    1.0,
+                ),
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+        output = self._run_hook(
+            {
+                "hook_event_name": "UserPromptSubmit",
+                "session_id": "claude-current",
+                "prompt": (
+                    "Please inspect authorityzebra governance contract precedence now"
+                ),
+            },
+            "claude",
+            {
+                "AGENT_MEMORY_DB": str(document_db),
+                "SCORE_CEILING": "0",
+            },
+        )
+        context = json.loads(output)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("canonical-contract.md", context)
+        self.assertNotIn("stale-skill.md", context)
+
     def test_hook_silently_rejects_a_weak_one_term_session_match(self):
         output = self._run_hook(
             {
@@ -626,14 +817,55 @@ class SessionContinuityTest(unittest.TestCase):
         )
         self.assertEqual(output, "")
 
-    def test_hook_accepts_grok_camel_case_and_excludes_current_session(self):
+    def test_hook_rejects_generic_agent_update_overlap(self):
+        conn = sqlite3.connect(self.hermes_db)
+        conn.execute(
+            "INSERT INTO sessions(id, source, started_at, title, cwd) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "hermes-unrelated-update",
+                "discord",
+                900.0,
+                "Agent Runtime Update",
+                "/work/hermes",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO messages(session_id, role, content, timestamp) "
+            "VALUES (?, ?, ?, ?)",
+            (
+                "hermes-unrelated-update",
+                "user",
+                "Claude handled an unrelated runtime update and instruction layer.",
+                901.0,
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        output = self._run_hook(
+            {
+                "hook_event_name": "pre_llm_call",
+                "session_id": "hermes-current",
+                "extra": {
+                    "user_message": (
+                        "Claude, you now have an instruction layer update, "
+                        "can you confirm please"
+                    )
+                },
+            },
+            "hermes",
+        )
+        self.assertEqual(output, "")
+
+    def test_grok_prompt_hook_exits_because_passive_output_cannot_inject(self):
         output = self._run_hook(
             {
                 "hookEventName": "user_prompt_submit",
-                "sessionId": "grok-one",
+                "sessionId": "grok-current",
                 "prompt": (
-                    "Please resume the grokcanary local "
-                    "deterministic retrieval work"
+                    "Please resume the codexcanary central "
+                    "session index work"
                 ),
             },
             "grok",

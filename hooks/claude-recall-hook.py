@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Universal prompt hook for deterministic document and session recall.
+"""Prompt hook for deterministic document and session recall.
 
 The file keeps its original Claude-oriented name because existing Claude Code
-and Grok configurations already point to it. It also speaks Hermes's native
-``pre_llm_call`` wire format.
+configurations already point to it. It also speaks Hermes's native
+``pre_llm_call`` wire format. Grok can use the same MCP server, but its passive
+prompt hooks ignore stdout, so this script exits without doing redundant work.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
+from session_adapters import clean_message_content  # noqa: E402
 from session_continuity import recall_sessions  # noqa: E402
 
 
@@ -30,7 +32,7 @@ DOC_DB_PATH = Path(
 SESSION_DB_PATH = Path(
     os.environ.get("AGENT_SESSION_DB", str(REPO / "sessions.db"))
 )
-HOOK_LOG = REPO / "hook.log"
+HOOK_LOG = Path(os.environ.get("AGENT_MEMORY_HOOK_LOG", str(REPO / "hook.log")))
 HOOK_EXCLUDE_PATH = REPO / "hook-exclude.txt"
 
 MIN_PROMPT_WORDS = 6
@@ -105,6 +107,29 @@ STOPWORDS = {
     "work",
 }
 
+# These words commonly describe the conversation or agent rather than the
+# task. Deliberate recall tools still accept them. Automatic hook injection
+# favours precision by requiring more distinctive terms.
+LOW_SIGNAL_RECALL_TERMS = {
+    "agent",
+    "agents",
+    "change",
+    "changes",
+    "claude",
+    "confirm",
+    "confirmation",
+    "confirmed",
+    "grok",
+    "instruction",
+    "instructions",
+    "latest",
+    "layer",
+    "new",
+    "now",
+    "update",
+    "updated",
+}
+
 
 def load_hook_excludes() -> list[str]:
     try:
@@ -138,6 +163,11 @@ def prompt_terms(prompt: str) -> list[str]:
     return terms
 
 
+def automatic_recall_terms(terms: list[str]) -> list[str]:
+    """Keep only terms discriminative enough for automatic context injection."""
+    return [term for term in terms if term not in LOW_SIGNAL_RECALL_TERMS]
+
+
 def document_hits(terms: list[str]):
     if not DOC_DB_PATH.exists():
         return []
@@ -147,10 +177,13 @@ def document_hits(terms: list[str]):
         rows = conn.execute(
             "SELECT path, source, mtime, bm25(docs) AS score, "
             "snippet(docs, 0, '', '', ' ... ', 24) AS snip "
-            "FROM docs WHERE docs MATCH ? ORDER BY bm25(docs) LIMIT ?",
+            "FROM docs WHERE docs MATCH ? AND source != 'skills' "
+            "ORDER BY bm25(docs) LIMIT ?",
             (expression, TOP_DOCS * 3),
         ).fetchall()
-        doc_count = conn.execute("SELECT count(*) FROM docs").fetchone()[0]
+        doc_count = conn.execute(
+            "SELECT count(*) FROM docs WHERE source != 'skills'"
+        ).fetchone()[0]
         conn.close()
     except sqlite3.Error:
         return []
@@ -300,6 +333,23 @@ def build_context(doc_hits, session_hits) -> str:
     return "\n\n".join(sections)[:MAX_CONTEXT_CHARS]
 
 
+def emit_context(event: str, context: str) -> None:
+    if event == "pre_llm_call":
+        print(json.dumps({"context": context}))
+    else:
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "UserPromptSubmit",
+                        "additionalContext": context,
+                    },
+                    "suppressOutput": True,
+                }
+            )
+        )
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -308,14 +358,19 @@ def main() -> int:
     if not isinstance(payload, dict):
         return 0
 
-    prompt = extract_prompt(payload)
-    if prompt.startswith("/") or len(prompt.split()) < MIN_PROMPT_WORDS:
+    harness = detect_harness(payload)
+    if harness == "grok":
         return 0
-    terms = prompt_terms(prompt)
+
+    prompt = clean_message_content("user", extract_prompt(payload))
+    if not prompt:
+        return 0
+    if prompt.lstrip().startswith("/") or len(prompt.split()) < MIN_PROMPT_WORDS:
+        return 0
+    terms = automatic_recall_terms(prompt_terms(prompt))
     if len(terms) < 2:
         return 0
 
-    harness = detect_harness(payload)
     current_session_id = str(
         payload.get("session_id")
         or payload.get("sessionId")
@@ -340,20 +395,7 @@ def main() -> int:
         or payload.get("hookEventName")
         or ""
     ).lower()
-    if event == "pre_llm_call":
-        print(json.dumps({"context": context}))
-    else:
-        print(
-            json.dumps(
-                {
-                    "hookSpecificOutput": {
-                        "hookEventName": "UserPromptSubmit",
-                        "additionalContext": context,
-                    },
-                    "suppressOutput": True,
-                }
-            )
-        )
+    emit_context(event, context)
     return 0
 
 

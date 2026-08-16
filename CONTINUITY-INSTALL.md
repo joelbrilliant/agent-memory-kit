@@ -12,8 +12,8 @@ machine. The agent should adapt to the harnesses that are actually installed.
 >
 > My goal is to move between Hermes Agent, Claude Code, Codex and Grok without
 > repeating prior context. Use only the harnesses that are installed on this
-> machine. Do not install Honcho, a vector database, an embedding service, a
-> daemon or an LLM memory layer.
+> machine. Do not install a vector database, embedding service, daemon or
+> separate LLM memory layer.
 >
 > Before indexing, show me two separate approval lists:
 >
@@ -28,6 +28,10 @@ machine. The agent should adapt to the harnesses that are actually installed.
 > into every compatible harness, add the prompt hook where supported, and add a
 > small standing instruction that says to call `session_recall` before asking
 > me to repeat earlier context.
+>
+> Grok prompt hooks are passive and ignore stdout. Do not claim silent Grok
+> injection. For Grok, verify transcript indexing, MCP health and one real
+> `session_recall` call from a Grok session.
 >
 > Verify the result with:
 >

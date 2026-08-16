@@ -44,6 +44,16 @@ GENERATED_MESSAGE_PREFIXES = (
     "[CONTEXT COMPACTION",
     "[Context compaction",
     "[System note:",
+    "[Your active task list was preserved across context compression]",
+    "[IMPORTANT: Background process",
+    "You've reached the maximum number of tool-calling iterations allowed.",
+    "Review the conversation above and update the skill library",
+    "Review the conversation above and consider saving to memory",
+    "Review the conversation above and update two things:",
+)
+GENERATED_USER_ENVELOPE_PREFIX = "<user_info"
+ACTIVE_TASK_LIST_MARKER = (
+    "[Your active task list was preserved across context compression]"
 )
 
 
@@ -164,6 +174,33 @@ def text_parts(content, allowed_types: set[str]) -> list[str]:
     return parts
 
 
+def is_generated_user_envelope(role: str, content: str) -> bool:
+    return (
+        role == "user"
+        and content.lstrip().lower().startswith(GENERATED_USER_ENVELOPE_PREFIX)
+    )
+
+
+def clean_message_content(role: str, content: str) -> str:
+    """Remove harness-generated context while preserving genuine user text."""
+    if not isinstance(content, str):
+        return ""
+    cleaned = content.strip()
+    if not cleaned:
+        return ""
+    if cleaned.startswith(GENERATED_MESSAGE_PREFIXES):
+        return ""
+    if is_generated_user_envelope(role, cleaned):
+        return ""
+    if role == "user":
+        marker_at = cleaned.find(ACTIVE_TASK_LIST_MARKER)
+        if marker_at >= 0 and (
+            marker_at == 0 or cleaned[marker_at - 1] == "\n"
+        ):
+            cleaned = cleaned[:marker_at].rstrip()
+    return cleaned
+
+
 def discover_hermes(path: Path) -> list[SessionDescriptor]:
     if not path.is_file():
         return []
@@ -243,9 +280,8 @@ def load_hermes(descriptor: SessionDescriptor) -> list[RawMessage]:
 
     messages = []
     for message_id, role, content, timestamp in rows:
-        if not isinstance(content, str):
-            continue
-        if content.lstrip().startswith(GENERATED_MESSAGE_PREFIXES):
+        content = clean_message_content(role, content)
+        if not content:
             continue
         messages.append(
             RawMessage(
@@ -330,6 +366,9 @@ def load_claude(descriptor: SessionDescriptor) -> list[RawMessage]:
         content = "\n".join(part for part in parts if part.strip()).strip()
         if not content:
             continue
+        content = clean_message_content(role, content)
+        if not content:
+            continue
         messages.append(
             RawMessage(
                 message_key=str(row.get("uuid") or line_number),
@@ -396,6 +435,9 @@ def load_codex(descriptor: SessionDescriptor) -> list[RawMessage]:
         content = "\n".join(part for part in parts if part.strip()).strip()
         if not content:
             continue
+        content = clean_message_content(role, content)
+        if not content:
+            continue
         messages.append(
             RawMessage(
                 message_key=str(payload.get("id") or line_number),
@@ -452,6 +494,9 @@ def load_grok(descriptor: SessionDescriptor) -> list[RawMessage]:
             continue
         parts = text_parts(row.get("content"), {"text"})
         content = "\n".join(part for part in parts if part.strip()).strip()
+        if not content:
+            continue
+        content = clean_message_content(role, content)
         if not content:
             continue
         messages.append(

@@ -118,11 +118,15 @@ See [examples/session-continuity.md](examples/session-continuity.md).
 ## 6. Wire your own harness
 
 See [examples/harnesses.md](examples/harnesses.md) for Claude Code, Hermes
-Agent, Codex, and generic shell harnesses. Minimum viable wiring is the
+Agent, Codex, Grok and generic shell harnesses. Minimum viable wiring is the
 copy-paste snippet in
 [examples/agent-instructions.md](examples/agent-instructions.md) added to your
 own standing instructions or skill system: recall 1-2 queries before
 substantial work; `remember` only at verified checkpoints, with evidence.
+
+For Grok, do not count a prompt hook as context injection. Verify that Grok
+transcripts enter the index, the MCP server is healthy, and a real Grok turn
+can call `session_recall` successfully.
 
 ## 7. Schedule the maintenance
 

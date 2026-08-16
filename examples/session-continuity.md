@@ -75,10 +75,13 @@ The standing rule is:
 > context. Use distinctive terms. Treat transcript hits as leads and verify
 > the live task artefact before acting.
 
-The prompt hook can also inject a small relevant excerpt automatically. It
-excludes the current session when the harness supplies a session ID, prefers
-session hits over document hits, and caps injected context at 1,800 characters.
-Short prompts and weak one-term matches stay silent.
+Claude Code and Hermes can also receive a small relevant excerpt through their
+prompt hooks. The hook excludes the current session when the harness supplies a
+session ID, prefers session hits over document hits, and caps injected context
+at 1,800 characters. Short prompts and weak one-term matches stay silent.
+
+Codex and Grok use deliberate MCP recall. Grok's passive prompt hooks ignore
+stdout, so they cannot inject returned context into the model.
 
 ## Acceptance test
 

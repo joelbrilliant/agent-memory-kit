@@ -143,8 +143,6 @@ Each is a short, practical file under [examples/](examples/):
   index on a schedule (launchd on macOS, cron on Linux).
 - [examples/self-audit.md](examples/self-audit.md) - a scheduled prompt that
   judges whether recall earned its keep and reports KEEP or KILL.
-- [examples/honcho.md](examples/honcho.md) - an optional user-model layer. It
-  is not required for deterministic cross-harness continuity.
 - [examples/agent-instructions.md](examples/agent-instructions.md) - a
   copy-paste system-prompt snippet for any agent harness.
 - [examples/session-continuity.md](examples/session-continuity.md) - session
@@ -170,13 +168,16 @@ evidence. It never deletes anything itself. See
   story, and no concurrency model beyond one person on one machine.
 - The auto-recall hook uses a small hard-coded English stopword list, so its
   term extraction is English-only. The CLIs themselves are language-agnostic.
+- Grok indexes local dialogue and exposes deliberate recall through MCP, but
+  its passive prompt hooks ignore stdout. It cannot receive silent hook
+  injection. Use `session_recall` through MCP and a standing instruction.
 - Session continuity is local to one machine. If harness histories live on
   different machines, each machine has its own index unless you deliberately
   provide a secure shared filesystem. The kit never syncs raw transcripts.
 
 ## Requirements
 
-- Python 3.8 or newer.
+- Python 3.10 or newer.
 - SQLite compiled with FTS5. This is standard on macOS and most Linux
   distributions. The quickstart command above verifies it.
 

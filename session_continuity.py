@@ -15,10 +15,15 @@ from datetime import datetime
 from pathlib import Path
 
 from ingest import has_secret
+from db_permissions import (
+    enforce_private_database,
+    prepare_private_database,
+)
 from session_adapters import (
     GENERATED_MESSAGE_PREFIXES,
     SessionDescriptor,
     SessionRoots,
+    clean_message_content,
     discover_all,
     load_messages,
 )
@@ -81,32 +86,19 @@ class SessionSyncResult:
     elapsed_seconds: float
 
 
-def restrict_db_permissions(db_path: Path) -> None:
-    """Keep derived transcript data readable only by the current user."""
-    for candidate in (
-        db_path,
-        Path(str(db_path) + "-shm"),
-        Path(str(db_path) + "-wal"),
-    ):
-        try:
-            candidate.chmod(0o600)
-        except OSError:
-            pass
-
-
 def connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    db_path = prepare_private_database(db_path)
     conn = sqlite3.connect(db_path, timeout=2.0)
     conn.execute("PRAGMA busy_timeout=2000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     ensure_schema(conn)
-    restrict_db_permissions(db_path)
+    enforce_private_database(db_path)
     return conn
 
 
 def connect_readonly(db_path: Path) -> sqlite3.Connection:
-    restrict_db_permissions(db_path)
+    enforce_private_database(db_path)
     uri = db_path.resolve().as_uri() + "?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=2.0)
     conn.execute("PRAGMA busy_timeout=2000")
@@ -174,8 +166,10 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     )
 
 
-def safe_content(content: str) -> str | None:
+def safe_content(content: str, role: str | None = None) -> str | None:
     content = content.replace("\x00", "").strip()
+    if role:
+        content = clean_message_content(role, content)
     if (
         not content
         or content.startswith(GENERATED_MESSAGE_PREFIXES)
@@ -234,7 +228,7 @@ def _replace_session(
     indexed = 0
     skipped_secret = 0
     for message in load_messages(descriptor):
-        content = safe_content(message.content)
+        content = safe_content(message.content, role=message.role)
         if content is None:
             if message.content.strip() and (
                 has_secret(message.content)
@@ -314,12 +308,16 @@ def sync_index(
             indexed_messages += indexed
             skipped_secret += skipped
         conn.commit()
-        restrict_db_permissions(db_path)
+        enforce_private_database(db_path)
     except Exception:
         conn.rollback()
+        enforce_private_database(db_path)
         conn.close()
+        enforce_private_database(db_path)
         raise
+    enforce_private_database(db_path)
     conn.close()
+    enforce_private_database(db_path)
 
     return SessionSyncResult(
         sessions_by_harness=dict(sorted(counts.items())),
@@ -474,7 +472,22 @@ def recall_sessions(
             )
         )
     hits.sort(key=lambda hit: (round(hit.score, 2), -hit.updated_at))
-    return hits[: max(1, limit)]
+
+    # Codex and other harnesses can preserve the same conversation under more
+    # than one session id after a resume, fork, or archive migration. Keep the
+    # source rows intact, but do not spend recall slots on identical evidence.
+    distinct_hits = []
+    seen_excerpts = set()
+    for hit in hits:
+        excerpt_key = tuple(
+            (message.role, " ".join(message.text.lower().split()))
+            for message in hit.messages
+        )
+        if excerpt_key and excerpt_key in seen_excerpts:
+            continue
+        seen_excerpts.add(excerpt_key)
+        distinct_hits.append(hit)
+    return distinct_hits[: max(1, limit)]
 
 
 def list_sessions(
